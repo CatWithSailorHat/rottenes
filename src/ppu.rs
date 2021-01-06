@@ -1,7 +1,47 @@
 #![allow(dead_code)]
-use std::{ops::RangeInclusive, unimplemented};
+use std::{ops::RangeInclusive, unimplemented, unreachable};
 
 use super::bitmisc::{ U16Address, U8BitTest };
+
+pub const SCREEN_SIZE: usize = 256 * 240;
+
+#[derive(Clone, Copy)]
+pub struct RgbColor {
+    r: u8,
+    g: u8,
+    b: u8,
+}
+
+impl RgbColor {
+    fn new(r: u8, g: u8, b:u8) -> Self {
+        RgbColor{ r, g, b }
+    }
+
+    fn default() -> Self {
+        RgbColor::new(0, 0, 0)
+    }
+}
+
+type FrameBuffer = [RgbColor; SCREEN_SIZE];
+
+pub struct Palette([RgbColor; 64]);
+impl Palette {
+    fn new(data: &[u8]) -> Self {
+        assert!(data.len() == 64*3);
+        let mut palette = [RgbColor::default(); 64];
+
+        for (index, rgb) in data.chunks(3).enumerate() {
+            palette[index].r = rgb[0];
+            palette[index].g = rgb[1];
+            palette[index].b = rgb[2];
+        }
+        Palette(palette)
+    }
+
+    fn get_rgb(&self, index: usize) -> RgbColor {
+        self.0[index]
+    }
+}
 
 #[derive(Debug, Copy, Clone)]
 pub struct PpuAddr(u16);
@@ -201,7 +241,6 @@ impl PCtrl {
     }
 }
 
-
 pub struct PMask(u8);
 impl PMask {
     pub fn greyscale_mode(&self) -> bool {
@@ -234,6 +273,10 @@ impl PMask {
 
     pub fn emphasize_blue(&self) -> bool {
         self.0 & (1 << 7) != 0
+    }
+
+    pub fn emphasize_bits(&self) -> u8 {
+        (self.0 >> 5) & 0b111
     }
 }
 
@@ -318,7 +361,7 @@ impl Sprite {
         self.lo_tile_shift = lo;
     }
 
-    pub fn palette_index(&self) -> u8 {
+    pub fn color_set_index(&self) -> u8 {
         self.attribute & 0b11 + 4
     }
 
@@ -328,6 +371,10 @@ impl Sprite {
 }
 
 pub struct State {
+    frame_buffer: FrameBuffer,
+    frame_buffer_cursor: usize,
+    palette: Palette,
+
     n_dot: usize,
     n_scanline: usize,
     is_odd_frame: bool,
@@ -349,7 +396,7 @@ pub struct State {
 
     sprite_list: [Sprite; 8],
     sprite_list_cursor: usize,
-    sprite_zero_activated: bool,
+    sprite_0_on_scanline: bool,
 
     sprite_y_latch: u8,
     sprite_tile_addr_latch: u8,
@@ -397,25 +444,61 @@ impl<T: Context> Private for T {}
 impl<T: Context> Interface for T {}
 trait Private: Sized + Context {
     fn step(&mut self) {
-        match self.state().n_scanline {
-            0..=239 | 261 => self.render(),
-            241 => { 
-                if self.state().n_dot == 1 { /* TODO: set flag */ } 
-            },
-            _ => {}
-        };
-    }
-
-    fn render(&mut self) {
         let n_dot = self.state().n_dot;
         let n_scanline = self.state().n_scanline;
 
-        if n_scanline == 261 {
-            self.state_mut().pstatus.set_vblank_occured(false);
-            if (280..=304).contains(&n_dot) {
-                self.v_update()
+        match (n_scanline, n_dot) {
+            (0, 0) => {
+                if self.state().is_odd_frame {
+                    self.state_mut().n_dot += 1;
+                    self.step();
+                    return;
+                }
+            }
+            (0..=239, 1..=256) => {
+                self.draw_pixel();
+                self.prepare_render_data();
+            }
+            (0..=239, _) => {
+                self.prepare_render_data();
+            }
+            (240, _) => {
+                self.state_mut().frame_buffer_cursor = 0;
+            }
+            (241, 1) => {
+                self.state_mut().pstatus.set_vblank_occured(true)
+            }
+            (261, 1) => {
+                self.state_mut().pstatus.set_vblank_occured(false);
+                self.state_mut().pstatus.set_sprite_overflow(false);
+                self.state_mut().pstatus.set_sprite_0_hit(false);
+                self.prepare_render_data();
+            }
+            (261, _) => {
+                self.prepare_render_data();
+            }
+            (_, _) => {}
+        }
+        
+        match (n_scanline, n_dot) {
+            (261, 340) => {
+                self.state_mut().n_scanline = 0;
+                self.state_mut().n_dot = 0;
+            }
+            (_, 340) => {
+                self.state_mut().n_scanline += 1;
+                self.state_mut().n_dot = 0;
+            }
+            (_, _) => {
+                self.state_mut().n_dot += 0;
             }
         }
+        
+    }
+
+    fn prepare_render_data(&mut self) {
+        let n_dot = self.state().n_dot;
+        let n_scanline = self.state().n_scanline;
 
         // shift registers and sprite evaluation
         match n_dot {
@@ -497,6 +580,9 @@ trait Private: Sized + Context {
             340 => { self.bg_latch_tile_index(); }
             _ => {}
         }
+        if n_scanline == 261 && (280..=304).contains(&n_dot) {
+            self.v_update()
+        }
     }
 
     fn pixel_sprite(&self) -> (u8, u8, bool, bool) {
@@ -511,8 +597,8 @@ trait Private: Sized + Context {
 
                 let color_index = pattern_lo | (pattern_hi << 1);
                 let priority = sprite.in_front_of_background();
-                let palette_index = sprite.palette_index();
-                return (color_index, palette_index, priority, nth == 0)
+                let color_set_index = sprite.color_set_index();
+                return (color_index, color_set_index, priority, nth == 0)
             }
         }
         (0, 0, true, false)
@@ -523,20 +609,61 @@ trait Private: Sized + Context {
             let shift = self.state().fine_x + 8;
             let pattern_lo = (self.state().background_shift_lo >> shift) & 1; // << (7 - self.local_pixel_coordinate_x())) & 1;
             let pattern_hi = (self.state().background_shift_hi >> shift) & 1; // (7 - self.local_pixel_coordinate_x())) & 1;
-            let palette_index_lo = (self.state().attribute_shift_lo >> shift) & 1;
-            let palette_index_hi = (self.state().attribute_shift_hi >> shift) & 1;
+            let color_set_index_lo = (self.state().attribute_shift_lo >> shift) & 1;
+            let color_set_index_hi = (self.state().attribute_shift_hi >> shift) & 1;
 
-            let color_in_palette_index = pattern_lo | (pattern_hi << 1);
-            let palette_index = palette_index_lo | (palette_index_hi << 1);
+            let color_index = pattern_lo | (pattern_hi << 1);
+            let color_set_index = color_set_index_lo | (color_set_index_hi << 1);
 
-            (palette_index as u8, color_in_palette_index as u8)
+            (color_set_index as u8, color_index as u8)
         } else {
             (0, 0)
         }
     }
 
-    fn pixel_mixer(&self) -> (u8, u8) {
-        unimplemented!()
+    fn draw_pixel(&mut self) {
+        debug_assert!(self.state().frame_buffer_cursor < SCREEN_SIZE);
+
+        let (sp_color_set_index, sp_color_index, prioirty, is_sprite_0) = self.pixel_sprite();
+        let (bg_color_set_index, bg_color_index) = self.pixel_background();
+        
+        if self.state().sprite_0_on_scanline && sp_color_index != 0 && bg_color_index != 0 && is_sprite_0 {
+            self.state_mut().pstatus.set_sprite_0_hit(true);
+        }
+
+        let palette_index = match (bg_color_index, sp_color_index, prioirty) {
+            (0, 0, _) => 0,
+            (0, _, _) => (sp_color_set_index << 2) | sp_color_index,
+            (_, 0, _) => (bg_color_set_index << 2) | bg_color_index,
+            (_, _, false) => (sp_color_set_index << 2) | sp_color_index,
+            (_, _, true) => (bg_color_set_index << 2) | bg_color_index,
+        } as usize;
+
+        // let emphasized_palette_index = (palette_index | (self.state().pmask.emphasize_bits() << 6)) as usize;
+        let mut rgb = self.state().palette.get_rgb(palette_index);
+        let r = rgb.r as f32;
+        let g = rgb.r as f32;
+        let b = rgb.r as f32;
+
+        if self.state().pmask.emphasize_red() {
+            rgb.r = (r * 1.1) as u8;
+            rgb.g = (g * 0.9) as u8;
+            rgb.b = (b * 0.9) as u8;
+        }
+        if self.state().pmask.emphasize_green() {
+            rgb.r = (r * 0.9) as u8;
+            rgb.g = (g * 1.1) as u8;
+            rgb.b = (b * 0.9) as u8;
+        }
+        if self.state().pmask.emphasize_blue() {
+            rgb.r = (r * 0.9) as u8;
+            rgb.g = (g * 0.9) as u8;
+            rgb.b = (b * 1.1) as u8;
+        }
+        
+        let index = self.state().frame_buffer_cursor;
+        self.state_mut().frame_buffer[index] = rgb;
+        self.state_mut().frame_buffer_cursor += 1;
     }
 
     fn tick_clear_secondary_oam(&mut self) {
@@ -547,10 +674,6 @@ trait Private: Sized + Context {
 
     fn tick_sprite_evaluation(&mut self) {
         let mut state = self.state_mut();
-        if state.n_dot == 65 {
-            state.secondary_oam_cursor = 0;
-            state.primary_oam_cursor = 0;
-        }
         let scanline = state.n_scanline;
         let is_odd_cycle = state.n_dot & 1 == 1;
         
@@ -570,7 +693,7 @@ trait Private: Sized + Context {
                     if (y <= scanline) && (scanline < y + state.pctrl.sprite_length()) {
                         state.secondary_oam_cursor += 1;
                         state.sprite_evaluation_state = SpriteEvaluationState::Copy;
-                        state.sprite_zero_activated = state.secondary_oam_cursor == 0 && state.primary_oam_cursor == 1;
+                        state.sprite_0_on_scanline = state.secondary_oam_cursor == 0 && state.primary_oam_cursor == 1;
                     }
                     else {
                         state.primary_oam_cursor += 3;  // skip this sprite
@@ -802,10 +925,11 @@ trait Private: Sized + Context {
     }
 
     fn load(&mut self, mut address: u16) -> u8 {
-        if address <= 0x3EFF {
+        if address < 0x3f00 {
             self.peek_vram(address)
         } else {
             address &= 32 - 1;
+            debug_assert!((address as usize) < self.state_mut().palette_ram.len());
             if (address & 0b11) == 0 { // mirror
                 if address >= 16 {
                     address -= 16;
@@ -816,10 +940,11 @@ trait Private: Sized + Context {
     }
 
     fn store(&mut self, mut address: u16, mut value: u8) {
-        if address <= 0x3EFF {
+        if address < 0x3f00{
             self.poke_vram(address, value);
         } else {
             address &= 32 - 1;
+            debug_assert!((address as usize) < self.state_mut().palette_ram.len());
             value &= 64 - 1;
             if (address & 0b11) == 0 { // mirror
                 if address >= 16 {
