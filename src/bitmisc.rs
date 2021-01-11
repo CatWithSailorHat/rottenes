@@ -28,6 +28,9 @@ pub trait U8BitTest {
     fn is_b6_set(&self) -> bool;
     fn is_b5_set(&self) -> bool;
     fn is_b4_set(&self) -> bool;
+    fn is_b3_set(&self) -> bool;
+    fn is_b2_set(&self) -> bool;
+    fn is_b1_set(&self) -> bool;
     fn is_b0_set(&self) -> bool;
 }
 
@@ -46,6 +49,18 @@ impl U8BitTest for u8 {
 
     fn is_b4_set(&self) -> bool {
         *self & 0b0001_0000 != 0
+    }
+
+    fn is_b3_set(&self) -> bool {
+        *self & 0b0000_1000 != 0
+    }
+
+    fn is_b2_set(&self) -> bool {
+        *self & 0b0000_0100 != 0
+    }
+
+    fn is_b1_set(&self) -> bool {
+        *self & 0b0000_0010 != 0
     }
 
     fn is_b0_set(&self) -> bool {
