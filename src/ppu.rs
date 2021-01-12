@@ -1,6 +1,4 @@
 #![allow(dead_code)]
-use std::{ops::RangeInclusive, unimplemented, unreachable};
-
 use super::bitmisc::{ U16Address, U8BitTest };
 
 pub const SCREEN_SIZE: usize = 256 * 240;
@@ -232,7 +230,7 @@ impl PCtrl {
         }
     }
 
-    pub fn shoule_set_nmi(&self) -> bool {
+    pub fn nmi_output(&self) -> bool {
         self.0 & (1 << 7) != 0
     }
 
@@ -422,7 +420,8 @@ pub struct State {
     background_shift_hi: u16,
     attribute_shift_lo: u16,
     attribute_shift_hi: u16,
-    vblank_flag_cleared_by_read_pstatus: bool,
+
+    nmi_occured: bool,
 }
 
 pub trait Context: Sized {
@@ -430,7 +429,7 @@ pub trait Context: Sized {
     fn poke_vram(&mut self, addr: u16, val: u8);
     fn state(&self) -> &State;
     fn state_mut(&mut self) -> &mut State;
-    fn set_nmi(&mut self, value: bool);
+    fn trigger_nmi(&mut self);
     fn generate_frame(&mut self);
 }
 
@@ -506,12 +505,14 @@ trait Private: Sized + Context {
                 self.state_mut().frame_buffer_cursor = 0;
             }
             (241, 1) => {
-                self.state_mut().pstatus.set_vblank_occured(true)
+                self.state_mut().pstatus.set_vblank_occured(true);
+                self.try_to_trigger_nmi();
             }
             (261, 1) => {
                 self.state_mut().pstatus.set_vblank_occured(false);
                 self.state_mut().pstatus.set_sprite_overflow(false);
                 self.state_mut().pstatus.set_sprite_0_hit(false);
+                self.state_mut().nmi_occured = false;
                 self.prepare_render_data();
             }
             (261, _) => {
@@ -622,6 +623,18 @@ trait Private: Sized + Context {
         }
         if n_scanline == 261 && (280..=304).contains(&n_dot) {
             self.v_update()
+        }
+    }
+
+    fn try_to_trigger_nmi(&mut self) {
+        if self.state().pstatus.vblank_occured() && self.state().pctrl.nmi_output() {
+            if !self.state().nmi_occured {
+                self.trigger_nmi();
+                self.state_mut().nmi_occured = true;
+            }
+        }
+        else {
+            self.state_mut().nmi_occured = false;
         }
     }
 
@@ -1046,7 +1059,7 @@ trait Private: Sized + Context {
     fn read_ppustatus(&mut self) -> u8 {
         let value = self.state().pstatus.0;
         self.state_mut().pstatus.set_vblank_occured(false);
-        self.state_mut().vblank_flag_cleared_by_read_pstatus = true;
+        self.state_mut().nmi_occured = false;
         self.state_mut().write_toggle = false;
         value
     }
@@ -1055,6 +1068,7 @@ trait Private: Sized + Context {
         self.state_mut().pctrl.0 = value;
         let nn = self.state().pctrl.get_nn();
         self.state_mut().temporary_addr.set_nn(nn);
+        self.try_to_trigger_nmi();
     }
 
     fn write_ppumask(&mut self, value: u8) {

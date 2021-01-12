@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use std::num::Wrapping;
+use crate::bitmisc::U16Address;
 
 bitflags! {
     pub struct Flags: u8 {
@@ -22,6 +23,10 @@ bitflags! {
         const N = 1 << 7;
     }
 }
+
+const INT_NMI_ADDRESS: u16 = 0xFFFA;
+const INT_IRQ_BRK_ADDRESS: u16 = 0xFFFE;
+const INT_RESET_ADDRESS: u16 = 0xFFFC;
 
 #[allow(non_snake_case)]
 pub struct Registers {
@@ -70,12 +75,34 @@ pub trait Context: Sized {
     fn poke(&mut self, addr: u16, val: u8);
     fn state(&self) -> &State;
     fn state_mut(&mut self) -> &mut State;
-    fn skip_one_cycle(&mut self);
+    fn on_cycle(&mut self);
 }
 
 pub trait Interface: Sized + Context {
+    fn reset(&mut self) {
+        Private::reset(self);
+    }
+
     fn step(&mut self) {
-        let opcode: u8 = Private::fetch_and_inc_pc(self);
+        if self.state().nmi {
+            self.hardware_interrupt();
+            self.state_mut().nmi = false;
+        } else if self.state().irq && self.state().regs.P.contains(Flags::I) {
+            self.hardware_interrupt();
+            self.state_mut().irq = false;
+        }
+        else {
+            Private::execute_one_instruction(self);
+        }
+    }
+}
+
+impl<T: Context> Interface for T {}
+impl<T: Context> Private for T {}
+trait Private: Sized + Context {
+    #[inline]
+    fn execute_one_instruction(&mut self) {
+        let opcode: u8 = self.fetch_and_inc_pc();
         let (insturction, addressing): (fn()->AccessMode, fn(&mut Self, AccessMode)) = match opcode {
             0x00=>(brk, imp),   0x01=>(ora, izx),   0x02=>(kil, imp),   0x03=>(slo, izx),
             0x04=>(nop, zpg),   0x05=>(ora, zpg),   0x06=>(asl, zpg),   0x07=>(slo, zpg),
@@ -151,14 +178,35 @@ pub trait Interface: Sized + Context {
         };
         addressing(self, insturction());
     }
-}
 
-impl<T: Context> Interface for T {}
-impl<T: Context> Private for T {}
-trait Private: Sized + Context {
+    #[inline]
+    fn hardware_interrupt(&mut self) {
+        let interrupt_addr = if self.state().nmi {
+            INT_NMI_ADDRESS
+        } else {
+            INT_IRQ_BRK_ADDRESS
+        };
+        self.dummy_load(self.regs().PC);
+        self.dummy_load(self.regs().PC);
+        self.push(self.regs().PC.fetch_hi());
+        self.push(self.regs().PC.fetch_lo());
+        self.regs_mut().P.set(Flags::B, false);
+        self.push(self.regs().P.bits);
+        self.regs_mut().P.set(Flags::I, true);
+        self.regs_mut().PC = self.load16(interrupt_addr);
+    }
+
+    #[inline]
+    fn reset(&mut self) {
+        self.regs_mut().P.set(Flags::B, false);
+        self.push(self.regs().P.bits);
+        self.regs_mut().P.set(Flags::I, true);
+        self.regs_mut().PC = self.load16(INT_RESET_ADDRESS);
+    }
+
     #[inline]
     fn tick(&mut self) {
-        self.skip_one_cycle();
+        self.on_cycle();
     }
 
     #[inline]
@@ -523,10 +571,16 @@ fn imp<CPU: Private>(cpu: &mut CPU, access: AccessMode) {
             let pch = (pc >> 8) as u8;
             let pcl = pc as u8;
             cpu.push(pch); cpu.push(pcl);
+            let interrupt_addr = if cpu.state().nmi {
+                INT_NMI_ADDRESS
+            } else {
+                INT_IRQ_BRK_ADDRESS
+            };
             let mut p = cpu.regs().P;
             p.set(Flags::B, true);
             cpu.push(p.bits);
-            cpu.regs_mut().PC = cpu.load16(0xfffe)
+            p.set(Flags::I, true);
+            cpu.regs_mut().PC = cpu.load16(interrupt_addr)
         },
         AccessMode::JSR => {
             let pc = cpu.regs().PC;

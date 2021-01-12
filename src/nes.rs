@@ -53,7 +53,7 @@ impl<C: Context> mos6502::Context for C {
         &mut self.state_mut().mos6502
     }
 
-    fn skip_one_cycle(&mut self) {
+    fn on_cycle(&mut self) {
         todo!()
     }
 }
@@ -75,12 +75,12 @@ impl<C: Context> ppu::Context for C {
         &mut self.state_mut().ppu
     }
 
-    fn set_nmi(&mut self, value: bool) {
+    fn generate_frame(&mut self) {
         todo!()
     }
 
-    fn generate_frame(&mut self) {
-        todo!()
+    fn trigger_nmi(&mut self) {
+        self.state_mut().mos6502.nmi = true;
     }
 }
 
