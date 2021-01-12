@@ -4,10 +4,20 @@ use crate::error::LoadError;
 use crate::rom::Rom;
 
 pub trait Mapper {
-    fn peek(&mut self, addr: u16) -> u8;
-    fn poke(&mut self, addr: u16, val: u8);
-    fn vpeek(&mut self, addr: u16) -> u8;
-    fn vpoke(&mut self, addr: u16, val: u8);
+    fn peek_expansion_rom(&mut self, addr: u16) -> u8;
+    fn poke_expansion_rom(&mut self, addr: u16, val: u8);
+    
+    fn peek_sram(&mut self, addr: u16) -> u8;
+    fn poke_sram(&mut self, addr: u16, val: u8);
+
+    fn peek_prg_rom(&mut self, addr: u16) -> u8;
+    fn poke_prg_rom(&mut self, addr: u16, val: u8);
+
+    fn vpeek_nametable(&mut self, addr: u16) -> u8;
+    fn vpoke_nametable(&mut self, addr: u16, val: u8);
+
+    fn vpeek_pattern(&mut self, addr: u16) -> u8;
+    fn vpoke_pattern(&mut self, addr: u16, val: u8);
 }
 
 pub fn create_mapper(rom: Rom) -> Result<Box<dyn Mapper>, LoadError> {

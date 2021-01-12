@@ -438,6 +438,46 @@ pub trait Interface: Sized + Context {
     fn step(&mut self) {
         Private::step(self);
     }
+
+    fn write_ppuctrl(&mut self, value: u8) {
+        Private::write_ppuctrl(self, value);
+    }
+
+    fn write_ppumask(&mut self, value: u8) {
+        Private::write_ppumask(self, value);
+    }
+
+    fn read_ppustatus(&mut self) -> u8 {
+        Private::read_ppustatus(self)
+    }
+
+    fn write_oamaddr(&mut self, value: u8) {
+        Private::write_oamaddr(self, value);
+    }
+
+    fn read_oamdata(&mut self) -> u8 {
+        Private::read_oamdata(self)
+    }
+
+    fn write_oamdata(&mut self, value: u8) {
+        Private::write_oamdata(self, value);
+    }
+
+    fn write_ppuscroll(&mut self, value: u8) {
+        Private::write_ppuscroll(self, value);
+    }
+
+    fn write_ppuaddr(&mut self, value: u8) {
+        Private::write_ppuaddr(self, value);
+    }
+
+    fn read_ppudata(&mut self) -> u8 {
+        Private::read_ppudata(self)
+    }
+
+    fn write_ppudata(&mut self, value: u8) {
+        Private::write_ppudata(self, value);
+    }
 }
 
 impl<T: Context> Private for T {}
@@ -955,6 +995,17 @@ trait Private: Sized + Context {
         };
     }
 
+    fn is_rendering(&self) -> bool {
+        let mask = &self.state().pmask;
+        mask.show_background() || mask.show_sprites()
+    }
+
+    fn increase_current_address(&mut self) {
+        let inc = self.state().pctrl.vram_addr_increment();
+        let value = (self.state().current_addr.0 as usize + inc) & 0x7FFF;
+        self.state_mut().current_addr.0 = value as u16;
+    }
+
     fn write_ppuaddr(&mut self, value: u8) {
         if self.state().write_toggle == false {
             self.state_mut().temporary_addr.set_high_byte(value);
@@ -965,18 +1016,13 @@ trait Private: Sized + Context {
             self.state_mut().current_addr.0 = self.state().temporary_addr.0;
             self.state_mut().write_toggle = false;
         }
-    }    
-
-    fn is_rendering(&self) -> bool {
-        let mask = &self.state().pmask;
-        mask.show_background() || mask.show_sprites()
     }
 
     fn read_ppudata(&mut self) -> u8 {
         let addr = self.state().current_addr.0 & 0x3FFF;
         let mut value = self.load(addr);
         self.increase_current_address();
-        if addr <= 0x3eff {
+        if addr < 0x3f00 {
             let old = self.state().ppudata_buffer;
             self.state_mut().ppudata_buffer = value;
             old
@@ -995,12 +1041,6 @@ trait Private: Sized + Context {
         let addr = self.state().current_addr.0 & 0x3FFF;
         self.store(addr, value);
         self.increase_current_address();
-    }
-
-    fn increase_current_address(&mut self) {
-        let inc = self.state().pctrl.vram_addr_increment();
-        let value = (self.state().current_addr.0 as usize + inc) & 0x7FFF;
-        self.state_mut().current_addr.0 = value as u16;
     }
 
     fn read_ppustatus(&mut self) -> u8 {

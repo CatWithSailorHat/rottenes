@@ -8,11 +8,19 @@ pub enum NesVersion {
     V2,
 }
 
+#[derive(PartialEq, Eq)]
+pub enum MirrorMode {
+    H,
+    V,
+}
+
 pub struct Rom {
     pub prg_rom: Vec<u8>,
+    pub prg_banks: usize,
     pub chr_rom: Vec<u8>,
+    pub chr_banks: usize,
     pub trainner: Vec<u8>,
-    pub mirroring: bool,
+    pub mirroring: MirrorMode,
     pub four_screen_mode: bool,
     pub has_battery: bool,
     pub nes_version: NesVersion,
@@ -29,10 +37,10 @@ impl Rom {
             }
         }
     
-        let prg_nums = header[4] as usize;
-        let chr_nums = header[5] as usize;
+        let prg_banks = header[4] as usize;
+        let chr_banks = header[5] as usize;
 
-        let mirroring = header[6].is_b0_set();
+        let mirroring = if header[6].is_b0_set() { MirrorMode::V } else { MirrorMode::H };
         let has_battery = header[6].is_b1_set();
         let has_trainner = header[6].is_b2_set();
         let four_screen_mode = header[6].is_b3_set();
@@ -61,7 +69,7 @@ impl Rom {
         let mut i: usize = 0;
         let mut prg_buf = [0u8; 0x4000];
         let mut prg_rom: Vec<u8> = Vec::new();
-        while i < prg_nums {
+        while i < prg_banks {
             stream.read_exact(&mut prg_buf)?;
             let mut buf = prg_buf.to_vec();
             prg_rom.append(&mut buf);
@@ -71,7 +79,7 @@ impl Rom {
         let mut i: usize = 0;
         let mut chr_rom: Vec<u8> = Vec::new();
         let mut chr_buf = [0u8; 0x2000];
-        while i < chr_nums {
+        while i < chr_banks {
             stream.read_exact(&mut chr_buf)?;
             let mut buf = chr_buf.to_vec();
             chr_rom.append(&mut buf);
@@ -87,6 +95,8 @@ impl Rom {
             has_battery,
             nes_version,
             mapper_id,
+            prg_banks,
+            chr_banks,
         })
     }
 }
