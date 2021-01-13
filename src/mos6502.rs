@@ -75,7 +75,6 @@ pub trait Context: Sized {
     fn poke(&mut self, addr: u16, val: u8);
     fn state(&self) -> &State;
     fn state_mut(&mut self) -> &mut State;
-    fn on_cycle(&mut self);
 }
 
 pub trait Interface: Sized + Context {
@@ -205,11 +204,6 @@ trait Private: Sized + Context {
     }
 
     #[inline]
-    fn tick(&mut self) {
-        self.on_cycle();
-    }
-
-    #[inline]
     fn regs(&self) -> &Registers {
         &self.state().regs
     }
@@ -221,13 +215,11 @@ trait Private: Sized + Context {
 
     #[inline]
     fn load(&mut self, addr: u16) -> u8 {
-        self.tick();
         self.peek(addr)
     }
 
     #[inline]
     fn store(&mut self, addr: u16, val: u8) {
-        self.tick();
         self.poke(addr, val)
     }
 
@@ -562,9 +554,7 @@ fn imp<CPU: Private>(cpu: &mut CPU, access: AccessMode) {
             let pcl = cpu.pull() as u16;
             let pch = (cpu.pull() as u16) << 8;
             cpu.regs_mut().PC = pcl | pch;
-            cpu.tick();  // increment PC
-            let next_pc = Wrapping(cpu.regs().PC) + Wrapping(1);
-            cpu.regs_mut().PC = next_pc.0;
+            cpu.fetch_and_inc_pc();
         },
         AccessMode::BRK => {
             let pc = cpu.regs().PC;
@@ -586,7 +576,7 @@ fn imp<CPU: Private>(cpu: &mut CPU, access: AccessMode) {
             let pc = cpu.regs().PC;
             let pch = (pc >> 8) as u8;
             let pcl = pc as u8;
-            cpu.tick();
+            cpu.dummy_load(cpu.stack_address()); 
             cpu.push(pch); cpu.push(pcl);
             let high = cpu.load(pc);
             cpu.regs_mut().PC = (low as u16) | ((high as u16) << 8);

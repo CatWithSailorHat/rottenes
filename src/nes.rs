@@ -5,16 +5,24 @@ use crate::ppu;
 use crate::mapper;
 use crate::error::LoadError;
 
-use std::{io::{Cursor}, path::Path, unimplemented};
+use std::{io::{Cursor}, num::Wrapping, path::Path, unimplemented};
 use std::fs::File;
 use std::io::prelude::*;
 use std::io::Read;
+
+pub enum DmaState {
+    NoDma,
+    OmaDma(u8),
+}
 
 pub struct State {
     ppu: ppu::State,
     mos6502: mos6502::State,
     mapper: Option<Box<dyn mapper::Mapper>>,
     ram: [u8; 0x800],
+    cpu_cycle: Wrapping<usize>,
+    dma_state: DmaState,
+    frame_generated: bool,
 }
 
 pub trait Context: Sized {
@@ -22,6 +30,7 @@ pub trait Context: Sized {
     fn state( &self ) -> &State;
 
     fn on_cycle(&mut self) {}
+    fn on_frame(&mut self) {}
 }
 
 pub trait Interface: Sized + Context {
@@ -34,14 +43,49 @@ pub trait Interface: Sized + Context {
         let mut stream = Cursor::new(data);
         Private::load_from_stream(self, &mut stream)
     }
+
+    fn run_for_one_frame(&mut self) {
+        while !self.state().frame_generated {
+            mos6502::Interface::step(self);
+        }
+    }
+
+    fn get_cycle(&self) -> usize {
+        self.state().cpu_cycle.0
+    }
+
+    fn get_framebuffer(&self) -> &ppu::FrameBuffer {
+        ppu::Interface::get_framebuffer(self)
+    }
 }
 
 impl<C: Context> mos6502::Context for C {
     fn peek(&mut self, addr: u16) -> u8 {
+        // dma hijack
+        if let DmaState::OmaDma(v) = self.state().dma_state {
+            self.on_cpu_cycle();
+            Private::access(self, addr, AccessMode::Read);
+
+            if self.get_cycle() & 1 == 1 {  // not on `dma get cycle`
+                self.on_cpu_cycle();
+                Private::access(self, addr, AccessMode::Read);
+            }
+            
+            let base_read_addr = (v as u16) << 8;
+            for i in 0usize..=511 {
+                self.on_cpu_cycle();
+                let value = Private::access(self, base_read_addr + i as u16, AccessMode::Read);
+                self.on_cpu_cycle();
+                self.state_mut().ppu.oamdata[i] = value;
+            }
+        }
+
+        self.on_cpu_cycle();
         Private::access(self, addr, AccessMode::Read)
     }
 
     fn poke(&mut self, addr: u16, val: u8) {
+        self.on_cpu_cycle();
         Private::access(self, addr, AccessMode::Write(val));
     }
 
@@ -51,10 +95,6 @@ impl<C: Context> mos6502::Context for C {
 
     fn state_mut(&mut self) -> &mut mos6502::State {
         &mut self.state_mut().mos6502
-    }
-
-    fn on_cycle(&mut self) {
-        todo!()
     }
 }
 
@@ -76,7 +116,7 @@ impl<C: Context> ppu::Context for C {
     }
 
     fn generate_frame(&mut self) {
-        todo!()
+        self.state_mut().frame_generated = true;
     }
 
     fn trigger_nmi(&mut self) {
@@ -152,8 +192,8 @@ trait Private: Sized + Context {
                         unimplemented!()
                     },
                     AccessMode::Write(value) => {
-                        // dma
-                        todo!()
+                        self.state_mut().dma_state = DmaState::OmaDma(value);
+                        value
                     }
                 }
                 
@@ -224,5 +264,13 @@ trait Private: Sized + Context {
             },
             _ => unreachable!()
         }
+    }
+
+    fn on_cpu_cycle(&mut self) {
+        self.on_cycle();
+        self.state_mut().cpu_cycle += Wrapping(1);
+        ppu::Interface::tick(self);
+        ppu::Interface::tick(self);
+        ppu::Interface::tick(self);
     }
 }

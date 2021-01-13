@@ -20,7 +20,7 @@ impl RgbColor {
     }
 }
 
-type FrameBuffer = [RgbColor; SCREEN_SIZE];
+pub type FrameBuffer = [RgbColor; SCREEN_SIZE];
 
 pub struct Palette([RgbColor; 64]);
 impl Palette {
@@ -434,8 +434,12 @@ pub trait Context: Sized {
 }
 
 pub trait Interface: Sized + Context {
-    fn step(&mut self) {
-        Private::step(self);
+    fn tick(&mut self) {
+        Private::tick(self);
+    }
+
+    fn get_framebuffer(&self) -> &FrameBuffer {
+        &self.state().frame_buffer
     }
 
     fn write_ppuctrl(&mut self, value: u8) {
@@ -482,7 +486,7 @@ pub trait Interface: Sized + Context {
 impl<T: Context> Private for T {}
 impl<T: Context> Interface for T {}
 trait Private: Sized + Context {
-    fn step(&mut self) {
+    fn tick(&mut self) {
         let n_dot = self.state().n_dot;
         let n_scanline = self.state().n_scanline;
 
@@ -490,7 +494,7 @@ trait Private: Sized + Context {
             (0, 0) => {
                 if self.state().is_odd_frame {
                     self.state_mut().n_dot += 1;
-                    self.step();
+                    self.tick();
                     return;
                 }
             }
@@ -507,6 +511,7 @@ trait Private: Sized + Context {
             (241, 1) => {
                 self.state_mut().pstatus.set_vblank_occured(true);
                 self.try_to_trigger_nmi();
+                self.generate_frame();
             }
             (261, 1) => {
                 self.state_mut().pstatus.set_vblank_occured(false);
