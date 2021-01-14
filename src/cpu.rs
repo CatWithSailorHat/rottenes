@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+// #![allow(dead_code)]
 
 use std::{num::Wrapping};
 use crate::bitmisc::U16Address;
@@ -849,7 +849,7 @@ fn izy_inner<CPU: Private>(cpu: &mut CPU, instruction: Instruction) {
 }
 
 fn imp_inner<CPU: Private>(cpu: &mut CPU, instruction: Instruction) {
-    let low = cpu.load(cpu.regs().PC);
+    cpu.dummy_load(cpu.regs().PC);
     match instruction.get_operation() {
         Operation::Read(f) => {
             // nothing to do

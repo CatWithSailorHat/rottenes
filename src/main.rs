@@ -8,7 +8,7 @@ extern crate bitflags;
 extern crate sdl2; 
 
 
-mod mos6502;
+mod cpu;
 mod bitmisc;
 mod ppu;
 mod nes;

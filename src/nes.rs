@@ -1,11 +1,11 @@
-use crate::{orphan::Orphan, rom::Rom};
-use crate::mos6502;
+use crate::rom::Rom;
+use crate::cpu;
 use crate::ppu;
 
 use crate::mapper;
 use crate::error::LoadError;
 
-use std::{io::{Cursor}, num::Wrapping, path::Path, unimplemented};
+use std::{io::{Cursor}, num::Wrapping, path::Path};
 use std::fs::File;
 use std::io::prelude::*;
 use std::io::Read;
@@ -17,7 +17,7 @@ pub enum DmaState {
 
 pub struct State {
     ppu: ppu::State,
-    mos6502: mos6502::State,
+    mos6502: cpu::State,
     mapper: Option<Box<dyn mapper::Mapper>>,
     ram: [u8; 0x800],
     cpu_cycle: Wrapping<usize>,
@@ -29,7 +29,7 @@ impl State {
     pub fn new() -> Self {
         State {
             ppu: ppu::State::new(),
-            mos6502: mos6502::State::new(),
+            mos6502: cpu::State::new(),
             mapper: None,
             ram: [0; 0x800],
             cpu_cycle: Wrapping(0),
@@ -60,13 +60,13 @@ pub trait Interface: Sized + Context {
 
     fn run_for_one_frame(&mut self) {
         while !self.state().frame_generated {
-            mos6502::Interface::step(self);
+            cpu::Interface::step(self);
         }
         self.state_mut().frame_generated = false;
     }
 
     fn reset(&mut self) {
-        mos6502::Interface::reset(self);
+        cpu::Interface::reset(self);
     }
 
     fn get_cycle(&self) -> usize {
@@ -78,7 +78,7 @@ pub trait Interface: Sized + Context {
     }
 }
 
-impl<C: Context> mos6502::Context for C {
+impl<C: Context> cpu::Context for C {
     fn peek(&mut self, addr: u16) -> u8 {
         // dma hijack
         if let DmaState::OmaDma(v) = self.state().dma_state {
@@ -108,11 +108,11 @@ impl<C: Context> mos6502::Context for C {
         Private::access(self, addr, AccessMode::Write(val));
     }
 
-    fn state(&self) -> &mos6502::State {
+    fn state(&self) -> &cpu::State {
         &self.state().mos6502
     }
 
-    fn state_mut(&mut self) -> &mut mos6502::State {
+    fn state_mut(&mut self) -> &mut cpu::State {
         &mut self.state_mut().mos6502
     }
 }
