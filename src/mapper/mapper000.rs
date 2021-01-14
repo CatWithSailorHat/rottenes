@@ -39,13 +39,13 @@ impl Mapper for State {
     }
 
     fn peek_prg_rom(&mut self, addr: u16) -> u8 {
-        let addr = if self.mirror_prg { addr & 0x1FFF } else { addr & 0x3FFF};
-        self.rom.prg_rom[addr as usize]
+        let addr = if self.mirror_prg { addr & 0xBFFF } else { addr };
+        self.rom.prg_rom[(addr & 0x7FFF) as usize]
     }
 
     fn poke_prg_rom(&mut self, addr: u16, val: u8) {
-        let addr = if self.mirror_prg { addr & 0x1FFF } else { addr & 0x3FFF};
-        self.rom.prg_rom[addr as usize] = val;
+        let addr = if self.mirror_prg { addr & 0xBFFF } else { addr };
+        self.rom.prg_rom[(addr & 0x7FFF) as usize] = val;
     }
 
     fn vpeek_nametable(&mut self, addr: u16) -> u8 {

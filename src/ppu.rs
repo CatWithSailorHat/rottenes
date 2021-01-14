@@ -1,13 +1,13 @@
-#![allow(dead_code)]
+// #![allow(dead_code)]
 use super::bitmisc::{ U16Address, U8BitTest };
 
 pub const SCREEN_SIZE: usize = 256 * 240;
 
 #[derive(Clone, Copy)]
 pub struct RgbColor {
-    r: u8,
-    g: u8,
-    b: u8,
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
 }
 
 impl RgbColor {
@@ -49,6 +49,10 @@ impl PpuAddr {
     // ||| || +++++-------- coarse Y scroll
     // ||| ++-------------- nametable select
     // +++----------------- fine Y scroll
+    pub fn new() -> Self {
+        PpuAddr(0)
+    }
+
     #[inline]
     pub fn max_corase_x() -> u16 {
         0b11111
@@ -111,22 +115,22 @@ impl PpuAddr {
 
     #[inline]
     fn set_corase_x(&mut self, value: u16) {
-        self.0 = (self.0 & !0b0_000_00_00000_11111) & (value & 0b11111)
+        self.0 = (self.0 & !0b0_000_00_00000_11111) | (value & 0b11111)
     }
 
     #[inline]
     fn set_corase_y(&mut self, value: u16) {
-        self.0 = (self.0 & !0b0_000_00_11111_00000) & ((value & 0b11111) << 5)
+        self.0 = (self.0 & !0b0_000_00_11111_00000) | ((value & 0b11111) << 5)
     }
 
     #[inline]
     fn set_fine_y(&mut self, value: u16) {
-        self.0 = (self.0 & !0b0_111_00_00000_00000) & ((value & 0b111) << 12)
+        self.0 = (self.0 & !0b0_111_00_00000_00000) | ((value & 0b111) << 12)
     }
 
     #[inline]
     fn set_nn(&mut self, value: u16) {
-        self.0 = (self.0 & !0b0_000_11_00000_00000) & ((value & 0b11) << 10)
+        self.0 = (self.0 & !0b0_000_11_00000_00000) | ((value & 0b11) << 10)
     }
 
     #[inline]
@@ -187,6 +191,10 @@ impl PpuAddr {
 
 pub struct PCtrl(u8);
 impl PCtrl {
+    pub fn new(v: u8) -> Self {
+        PCtrl(v)
+    }
+
     #[inline]
     pub fn get_nn(&self) -> u16 {
         self.0 as u16 & 0b11
@@ -241,6 +249,10 @@ impl PCtrl {
 
 pub struct PMask(u8);
 impl PMask {
+    pub fn new(v: u8) -> Self {
+        PMask(v)
+    }
+
     pub fn greyscale_mode(&self) -> bool {
         self.0 & (1 << 0) != 0
     }
@@ -280,6 +292,10 @@ impl PMask {
 
 pub struct PStatus(u8);
 impl PStatus {
+    pub fn new(v: u8) -> Self {
+        PStatus(v)
+    }
+
     pub fn sprite_overflow(&self) -> bool {
         self.0 & (1 << 5) != 0
     }
@@ -324,6 +340,7 @@ pub enum SpriteEvaluationState {
     Idle, Copy, Search,
 }
 
+#[derive(Clone, Copy)]
 pub struct Sprite {
     pub x_pos: u8,
     pub y_pos: u8,
@@ -360,7 +377,7 @@ impl Sprite {
     }
 
     pub fn color_set_index(&self) -> u8 {
-        self.attribute & 0b11 + 4
+        (self.attribute & 0b11) + 4
     }
 
     pub fn in_front_of_background(&self) -> bool {
@@ -394,7 +411,7 @@ pub struct State {
 
     sprite_list: [Sprite; 8],
     sprite_list_cursor: usize,
-    sprite_0_on_scanline: bool,
+    sprite_0_on_current_scanline: bool,
 
     sprite_y_latch: u8,
     sprite_tile_addr_latch: u8,
@@ -402,26 +419,74 @@ pub struct State {
     // sprite_x_latch: u8,
 
     palette_ram: [u8; 32],
+
     current_addr: PpuAddr,
-    write_toggle: bool,
     temporary_addr: PpuAddr,
+    write_toggle: bool,
     fine_x: u8,
 
     address_latch: u16,
 
     tile_index_latch: u16,
     tile_lo_latch: u8,
-    tile_latch_hi: u8,
+    tile_hi_latch: u8,
     attribute_latch: u8,
 
-    ppudata_buffer: u8,
+    ppudata_latch: u8,
 
     background_shift_lo: u16,
     background_shift_hi: u16,
     attribute_shift_lo: u16,
     attribute_shift_hi: u16,
 
-    nmi_occured: bool,
+    nmi_triggered: bool,
+}
+
+impl State {
+    pub fn new() -> Self {
+        let palette_bytes = include_bytes!("./palette.pal");
+        State {
+            frame_buffer: [RgbColor::new(0, 0, 0); SCREEN_SIZE],
+            frame_buffer_cursor: 0,
+            palette: Palette::new(palette_bytes),
+            n_dot: 0,
+            n_scanline: 261,
+            pctrl: PCtrl::new(0),
+            pmask: PMask::new(0),
+            pstatus: PStatus::new(0),
+            oamaddr: 0,
+            oamdata: [0; 64 * 4],
+            primary_oam_cursor: 0,
+            primary_oam_latch: 0,
+            is_odd_frame: false,
+            secondary_oam: [0; 4 * 8],
+            secondary_oam_cursor: 0,
+            sprite_nums_on_scanline: 0,
+            sprite_evaluation_state: SpriteEvaluationState::Idle,
+            sprite_list: [Sprite::new(); 8],
+            sprite_list_cursor: 0,
+            sprite_0_on_current_scanline: false,
+            sprite_y_latch: 0,
+            sprite_tile_addr_latch: 0,
+            sprite_attribute_latch: 0,
+            palette_ram: [0; 32],
+            current_addr: PpuAddr::new(),
+            temporary_addr: PpuAddr::new(),
+            write_toggle: false,
+            fine_x: 0,
+            address_latch: 0,
+            tile_index_latch: 0,
+            tile_lo_latch: 0,
+            tile_hi_latch: 0,
+            attribute_latch: 0,
+            ppudata_latch: 0,
+            background_shift_lo: 0,
+            background_shift_hi: 0,
+            attribute_shift_lo: 0,
+            attribute_shift_hi: 0,
+            nmi_triggered: false, 
+        }
+    }
 }
 
 pub trait Context: Sized {
@@ -517,7 +582,7 @@ trait Private: Sized + Context {
                 self.state_mut().pstatus.set_vblank_occured(false);
                 self.state_mut().pstatus.set_sprite_overflow(false);
                 self.state_mut().pstatus.set_sprite_0_hit(false);
-                self.state_mut().nmi_occured = false;
+                self.state_mut().nmi_triggered = false;
                 self.prepare_render_data();
             }
             (261, _) => {
@@ -530,13 +595,14 @@ trait Private: Sized + Context {
             (261, 340) => {
                 self.state_mut().n_scanline = 0;
                 self.state_mut().n_dot = 0;
+                self.state_mut().is_odd_frame = !self.state().is_odd_frame;
             }
             (_, 340) => {
                 self.state_mut().n_scanline += 1;
                 self.state_mut().n_dot = 0;
             }
             (_, _) => {
-                self.state_mut().n_dot += 0;
+                self.state_mut().n_dot += 1;
             }
         }
         
@@ -562,6 +628,7 @@ trait Private: Sized + Context {
             65 => {
                 self.shift_sprite_registers();
                 self.shift_background_registers();
+                self.state_mut().sprite_evaluation_state = SpriteEvaluationState::Search;
                 self.state_mut().secondary_oam_cursor = 0;
                 self.state_mut().primary_oam_cursor = 0;
                 self.tick_sprite_evaluation()
@@ -603,6 +670,8 @@ trait Private: Sized + Context {
             257 => {
                 self.reload_background_registers(); 
                 self.h_update();
+                self.state_mut().secondary_oam_cursor = 0;
+                self.state_mut().sprite_list_cursor = 0;
                 self.sp_latch_y()
             }
             258..=320 => {
@@ -633,13 +702,13 @@ trait Private: Sized + Context {
 
     fn try_to_trigger_nmi(&mut self) {
         if self.state().pstatus.vblank_occured() && self.state().pctrl.nmi_output() {
-            if !self.state().nmi_occured {
+            if !self.state().nmi_triggered {
                 self.trigger_nmi();
-                self.state_mut().nmi_occured = true;
+                self.state_mut().nmi_triggered = true;
             }
         }
         else {
-            self.state_mut().nmi_occured = false;
+            self.state_mut().nmi_triggered = false;
         }
     }
 
@@ -685,17 +754,19 @@ trait Private: Sized + Context {
         let (sp_color_set_index, sp_color_index, prioirty, is_sprite_0) = self.pixel_sprite();
         let (bg_color_set_index, bg_color_index) = self.pixel_background();
         
-        if self.state().sprite_0_on_scanline && sp_color_index != 0 && bg_color_index != 0 && is_sprite_0 {
+        if self.state().sprite_0_on_current_scanline && sp_color_index != 0 && bg_color_index != 0 && is_sprite_0 && self.state().n_dot != 255 {
             self.state_mut().pstatus.set_sprite_0_hit(true);
         }
 
-        let palette_index = match (bg_color_index, sp_color_index, prioirty) {
+        let palette_ram_index = match (bg_color_index, sp_color_index, prioirty) {
             (0, 0, _) => 0,
             (0, _, _) => (sp_color_set_index << 2) | sp_color_index,
             (_, 0, _) => (bg_color_set_index << 2) | bg_color_index,
             (_, _, false) => (sp_color_set_index << 2) | sp_color_index,
             (_, _, true) => (bg_color_set_index << 2) | bg_color_index,
-        } as usize;
+        } as u16;
+
+        let palette_index = self.load(0x3F00 | palette_ram_index) as usize;
 
         // let emphasized_palette_index = (palette_index | (self.state().pmask.emphasize_bits() << 6)) as usize;
         let mut rgb = self.state().palette.get_rgb(palette_index);
@@ -735,7 +806,7 @@ trait Private: Sized + Context {
         let scanline = state.n_scanline;
         let is_odd_cycle = state.n_dot & 1 == 1;
         
-        if is_odd_cycle {
+        if is_odd_cycle && state.primary_oam_cursor < 256 {
             let primary_oam_cursor = state.primary_oam_cursor;
             state.primary_oam_latch = state.oamdata[primary_oam_cursor];
             state.primary_oam_cursor = primary_oam_cursor + 1;
@@ -751,13 +822,13 @@ trait Private: Sized + Context {
                     if (y <= scanline) && (scanline < y + state.pctrl.sprite_length()) {
                         state.secondary_oam_cursor += 1;
                         state.sprite_evaluation_state = SpriteEvaluationState::Copy;
-                        state.sprite_0_on_scanline = state.secondary_oam_cursor == 0 && state.primary_oam_cursor == 1;
+                        state.sprite_0_on_current_scanline = state.secondary_oam_cursor == 0 && state.primary_oam_cursor == 1;
                     }
                     else {
                         state.primary_oam_cursor += 3;  // skip this sprite
-                        // if self.primary_oam_cursor >= 256 {
-                        //     self.evaluation_state = SpriteEvaluationState::Idle;
-                        // }
+                        if self.state().primary_oam_cursor >= 256 {
+                            self.state_mut().sprite_evaluation_state = SpriteEvaluationState::Idle;
+                        }
                     }
                 }
                 SpriteEvaluationState::Copy => {
@@ -939,7 +1010,7 @@ trait Private: Sized + Context {
 
     #[inline]
     fn bg_latch_tile_hi(&mut self) {
-        self.state_mut().tile_latch_hi = self.load(self.state().address_latch);
+        self.state_mut().tile_hi_latch = self.load(self.state().address_latch);
     }
 
     fn h_scroll(&mut self) {
@@ -969,10 +1040,10 @@ trait Private: Sized + Context {
     }
 
     fn reload_background_registers(&mut self) {
-        self.state_mut().background_shift_lo = self.state().background_shift_lo & 0xff00 | (self.state().tile_lo_latch as u16);
-        self.state_mut().background_shift_hi = self.state().background_shift_hi & 0xff00 | (self.state().tile_latch_hi as u16);
-        self.state_mut().attribute_shift_lo = self.state().attribute_shift_lo & 0xff00 | (((self.state().attribute_latch as u16 >> 0) & 1) * 0xff);
-        self.state_mut().attribute_shift_hi = self.state().attribute_shift_lo & 0xff00 | (((self.state().attribute_latch as u16 >> 1) & 1) * 0xff);
+        self.state_mut().background_shift_lo = (self.state().background_shift_lo & 0xff00) | (self.state().tile_lo_latch as u16);
+        self.state_mut().background_shift_hi = (self.state().background_shift_hi & 0xff00) | (self.state().tile_hi_latch as u16);
+        self.state_mut().attribute_shift_lo = (self.state().attribute_shift_lo & 0xff00) | (((self.state().attribute_latch as u16 >> 0) & 1) * 0xff);
+        self.state_mut().attribute_shift_hi = (self.state().attribute_shift_hi & 0xff00) | (((self.state().attribute_latch as u16 >> 1) & 1) * 0xff);
     }
 
     fn shift_background_registers(&mut self) {
@@ -1041,13 +1112,13 @@ trait Private: Sized + Context {
         let mut value = self.load(addr);
         self.increase_current_address();
         if addr < 0x3f00 {
-            let old = self.state().ppudata_buffer;
-            self.state_mut().ppudata_buffer = value;
+            let old = self.state().ppudata_latch;
+            self.state_mut().ppudata_latch = value;
             old
         }
         else {
             // self.state_mut().ppudata_buffer = self.peek_vram(addr);
-            self.state_mut().ppudata_buffer = self.load(addr);
+            self.state_mut().ppudata_latch = self.load(addr);
             if self.state().pmask.greyscale_mode() {
                 value &= 0b110000;
             }
@@ -1064,7 +1135,7 @@ trait Private: Sized + Context {
     fn read_ppustatus(&mut self) -> u8 {
         let value = self.state().pstatus.0;
         self.state_mut().pstatus.set_vblank_occured(false);
-        self.state_mut().nmi_occured = false;
+        self.state_mut().nmi_triggered = false;
         self.state_mut().write_toggle = false;
         value
     }

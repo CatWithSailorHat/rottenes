@@ -5,6 +5,9 @@ use rom::Rom;
 #[macro_use]
 extern crate bitflags;
 
+extern crate sdl2; 
+
+
 mod mos6502;
 mod bitmisc;
 mod ppu;
@@ -13,12 +16,11 @@ mod orphan;
 mod error;
 mod mapper;
 mod rom;
+mod gui;
 
 fn main() {
-    let mut test_file = File::open(Path::new("./tests/rom/nestest.nes")).unwrap();
-        let rom = Rom::parse(&mut test_file).unwrap();
-        println!("{}", rom.mapper_id);
-        println!("{:X}", rom.prg_rom.len());
-        println!("{:X}", rom.chr_rom.len());
+    let mut gui = gui::GuiObject::new();
+    gui.load_rom_from_file(Path::new("./tests/rom/nestest.nes")).unwrap();
+    gui.run();
     println!("Hello, rottenes!");
 }

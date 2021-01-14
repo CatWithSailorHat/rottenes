@@ -25,6 +25,20 @@ pub struct State {
     frame_generated: bool,
 }
 
+impl State {
+    pub fn new() -> Self {
+        State {
+            ppu: ppu::State::new(),
+            mos6502: mos6502::State::new(),
+            mapper: None,
+            ram: [0; 0x800],
+            cpu_cycle: Wrapping(0),
+            dma_state: DmaState::NoDma,
+            frame_generated: false,
+        }
+    }
+}
+
 pub trait Context: Sized {
     fn state_mut( &mut self ) -> &mut State;
     fn state( &self ) -> &State;
@@ -48,6 +62,11 @@ pub trait Interface: Sized + Context {
         while !self.state().frame_generated {
             mos6502::Interface::step(self);
         }
+        self.state_mut().frame_generated = false;
+    }
+
+    fn reset(&mut self) {
+        mos6502::Interface::reset(self);
     }
 
     fn get_cycle(&self) -> usize {
@@ -188,9 +207,7 @@ trait Private: Sized + Context {
             },
             0x4014 => {
                 match mode {
-                    AccessMode::Read => {
-                        unimplemented!()
-                    },
+                    AccessMode::Read => panic!("Invalid dma port access"),
                     AccessMode::Write(value) => {
                         self.state_mut().dma_state = DmaState::OmaDma(value);
                         value
@@ -199,7 +216,7 @@ trait Private: Sized + Context {
                 
             },
             0x4000..=0x4013 | 0x4015..=0x401F => {
-                unimplemented!()
+                0  // FIXME
             },
             0x4020..=0x5FFF => {
                 let mapper = self.state_mut().mapper.as_mut().unwrap();
