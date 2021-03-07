@@ -178,7 +178,10 @@ trait Private: Sized + Context {
             0xFC=>(I::NOP, A::ABX),   0xFD=>(I::SBC, A::ABX),   0xFE=>(I::INC, A::ABX),   0xFF=>(I::ISC, A::ABX),
         };
         // println!("{:X}, {:X}, {:?}, {:?}", self.regs().PC - 1, opcode, insturction, mode);
-        mode.execute_operation(self, insturction)
+        // if self.regs().PC - 1 < 0x2000 {
+        //     panic!()
+        // }
+        mode.execute_instruction(self, insturction)
     }
 
     #[inline]
@@ -304,7 +307,7 @@ pub enum AddressingMode {
 }
 
 impl AddressingMode {
-    fn execute_operation<CPU: Private>(&self, cpu: &mut CPU, instruction: Instruction) {
+    fn execute_instruction<CPU: Private>(&self, cpu: &mut CPU, instruction: Instruction) {
         match self {
             AddressingMode::IMM => imm_inner(cpu, instruction),
             AddressingMode::ACC => acc_inner(cpu, instruction),
@@ -380,7 +383,7 @@ impl Instruction {
             }),
         
             Instruction::SBC => Operation::Read(|regs, val| {
-                let val = val & 0xff;
+                let val = val ^ 0xff;
                 let r = Wrapping(regs.A as u16) + Wrapping(val as u16) + Wrapping(regs.get_c_as_u8() as u16);
                 let a = regs.A;
                 regs.set_cv(a, val, r.0);
@@ -388,7 +391,7 @@ impl Instruction {
             }),
         
             Instruction::BIT => Operation::Read(|regs, val| {
-                regs.P.set(Flags::Z, !(val & regs.A) != 0);
+                regs.P.set(Flags::Z, (val & regs.A) == 0);
                 regs.P.set(Flags::N, val & 0x80 != 0);
                 regs.P.set(Flags::V, val & 0x40 != 0);
             }),
@@ -610,19 +613,19 @@ fn imm_inner<CPU: Private>(cpu: &mut CPU, instruction: Instruction) {
         Operation::Read(f) => {
             f(cpu.regs_mut(), val)
         }
-        Operation::Unimplemented => {},
+        Operation::Unimplemented => {panic!()},
         _ => panic!("Invalid instruction `{:?}` for `IMM`", instruction),
     };
 }
 
 fn acc_inner<CPU: Private>(cpu: &mut CPU, instruction: Instruction) {
-    let _ = cpu.fetch_and_inc_pc();
+    cpu.dummy_load(cpu.regs().PC);
     match instruction.get_operation() {
         Operation::ReadModifyWrite(f) => {
             let val = cpu.regs().A;
             cpu.regs_mut().A = f(cpu.regs_mut(), val);
         }
-        Operation::Unimplemented => {},
+        Operation::Unimplemented => {panic!()},
         _ => panic!("Invalid instruction `{:?}` for `ACC`", instruction),
     };
 }
@@ -660,7 +663,7 @@ fn abs_inner<CPU: Private>(cpu: &mut CPU, instruction: Instruction) {
             let high = cpu.load(pc);
             cpu.regs_mut().PC = (low as u16) | ((high as u16) << 8);
         },
-        Operation::Unimplemented => {},
+        Operation::Unimplemented => {panic!()},
         _ => panic!("Invalid instruction `{:?}` for `ABS`", instruction),
     };
 }
@@ -687,7 +690,7 @@ fn abx_inner<CPU: Private>(cpu: &mut CPU, instruction: Instruction) {
             let res = f(cpu.regs_mut());
             cpu.store(addr, res);
         },
-        Operation::Unimplemented => {},
+        Operation::Unimplemented => {panic!()},
         _ => panic!("Invalid instruction `{:?}` for `ABX`", instruction),
     }
 }
@@ -714,7 +717,7 @@ fn aby_inner<CPU: Private>(cpu: &mut CPU, instruction: Instruction) {
             let res = f(cpu.regs_mut());
             cpu.store(addr, res);
         },
-        Operation::Unimplemented => {},
+        Operation::Unimplemented => {panic!()},
         _ => panic!("Invalid instruction `{:?}` for `ABY`", instruction),
     }
 }
@@ -736,7 +739,7 @@ fn zpg_inner<CPU: Private>(cpu: &mut CPU, instruction: Instruction) {
             let res = f(cpu.regs_mut());
             cpu.store(addr, res);
         }
-        Operation::Unimplemented => {},
+        Operation::Unimplemented => {panic!()},
         _ => panic!("Invalid instruction `{:?}` for `ZPG`", instruction),
     }
 }
@@ -761,7 +764,7 @@ fn zpx_inner<CPU: Private>(cpu: &mut CPU, instruction: Instruction) {
             let res = f(cpu.regs_mut());
             cpu.store(addr, res);
         }
-        Operation::Unimplemented => {},
+        Operation::Unimplemented => {panic!()},
         _ => panic!("Invalid instruction `{:?}` for `ZPX`", instruction),
     }
 }
@@ -786,7 +789,7 @@ fn zpy_inner<CPU: Private>(cpu: &mut CPU, instruction: Instruction) {
             let res = f(cpu.regs_mut());
             cpu.store(addr, res);
         }
-        Operation::Unimplemented => {},
+        Operation::Unimplemented => {panic!()},
         _ => panic!("Invalid instruction `{:?}` for `ZPY`", instruction),
     }
 }
@@ -813,7 +816,7 @@ fn izx_inner<CPU: Private>(cpu: &mut CPU, instruction: Instruction) {
             let res = f(cpu.regs_mut());
             cpu.store(addr, res);
         }
-        Operation::Unimplemented => {},
+        Operation::Unimplemented => {panic!()},
         _ => panic!("Invalid instruction `{:?}` for `IZX`", instruction),
     }
 }
@@ -843,7 +846,7 @@ fn izy_inner<CPU: Private>(cpu: &mut CPU, instruction: Instruction) {
             let res = f(cpu.regs_mut());
             cpu.store(addr, res);
         },
-        Operation::Unimplemented => {},
+        Operation::Unimplemented => {panic!()},
         _ => panic!("Invalid instruction `{:?}` for `IZY`", instruction),
     }
 }
@@ -851,7 +854,7 @@ fn izy_inner<CPU: Private>(cpu: &mut CPU, instruction: Instruction) {
 fn imp_inner<CPU: Private>(cpu: &mut CPU, instruction: Instruction) {
     cpu.dummy_load(cpu.regs().PC);
     match instruction.get_operation() {
-        Operation::Read(f) => {
+        Operation::Read(_) => {
             // nothing to do
         }
         Operation::SetRegister(f) => {
@@ -890,7 +893,7 @@ fn imp_inner<CPU: Private>(cpu: &mut CPU, instruction: Instruction) {
             cpu.fetch_and_inc_pc();
         },
         Operation::BRK => {
-            let pc = cpu.regs().PC;
+            let pc = cpu.regs().PC + 1;
             let pch = (pc >> 8) as u8;
             let pcl = pc as u8;
             cpu.push(pch); cpu.push(pcl);
@@ -899,13 +902,12 @@ fn imp_inner<CPU: Private>(cpu: &mut CPU, instruction: Instruction) {
             } else {
                 INT_IRQ_BRK_ADDRESS
             };
-            let mut p = cpu.regs().P;
-            p.set(Flags::B, true);
-            cpu.push(p.bits);
-            p.set(Flags::I, true);
+            cpu.regs_mut().P.set(Flags::B, true);
+            cpu.push(cpu.regs().P.bits);
+            cpu.regs_mut().P.set(Flags::I, true);
             cpu.regs_mut().PC = cpu.load16(interrupt_addr)
         },
-        Operation::Unimplemented => {},
+        Operation::Unimplemented => {panic!()},
         _ => panic!("Invalid instruction `{:?}` for `IMP`", instruction),
     }
 }
@@ -923,7 +925,7 @@ fn ind_inner<CPU: Private>(cpu: &mut CPU, instruction: Instruction) {
         Operation::JMP => {
             cpu.regs_mut().PC = addr;
         },
-        Operation::Unimplemented => {},
+        Operation::Unimplemented => {panic!()},
         _ => panic!("Invalid instruction `{:?}` for `IND`", instruction),
     }
 }
@@ -940,7 +942,7 @@ fn rel_inner<CPU: Private>(cpu: &mut CPU, instruction: Instruction) {
                 if !on_same_page(old_pc, new_pc) { cpu.dummy_load((old_pc & 0xFF00) | (new_pc & 0x00FF)); };
             }
         },
-        Operation::Unimplemented => {},
-        _ => panic!("Invalid instruction `{:?}` for `rel`", instruction),
+        Operation::Unimplemented => {panic!()},
+        _ => panic!("Invalid instruction `{:?}` for `REL`", instruction),
     }
 }

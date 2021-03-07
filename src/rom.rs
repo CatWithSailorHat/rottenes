@@ -85,6 +85,12 @@ impl Rom {
             chr_rom.append(&mut buf);
             i += 1;
         }
+        if chr_banks == 0 {
+            // use CHR-RAM
+            println!("Use CHR-RAM");
+            let mut blank = [0u8; 0x2000].to_vec();
+            chr_rom.append(&mut blank);
+        }
         
         Ok(Rom{
             prg_rom,

@@ -11,11 +11,11 @@ pub struct RgbColor {
 }
 
 impl RgbColor {
-    fn new(r: u8, g: u8, b:u8) -> Self {
+    pub fn new(r: u8, g: u8, b:u8) -> Self {
         RgbColor{ r, g, b }
     }
 
-    fn default() -> Self {
+    pub fn default() -> Self {
         RgbColor::new(0, 0, 0)
     }
 }
@@ -36,7 +36,7 @@ impl Palette {
         Palette(palette)
     }
 
-    fn get_rgb(&self, index: usize) -> RgbColor {
+    pub fn get_rgb(&self, index: usize) -> RgbColor {
         self.0[index]
     }
 }
@@ -233,8 +233,8 @@ impl PCtrl {
 
     pub fn sprite_length(&self) -> usize {
         match self.0 & (1 << 5) {
-            0 => 0x8,
-            _ => 0x16,
+            0 => 8,
+            _ => 16,
         }
     }
 
@@ -261,7 +261,7 @@ impl PMask {
         self.0 & (1 << 1) != 0
     }
 
-    pub fn show_sp_in_leftmost_8_pixels(&self) -> bool {
+    pub fn show_sprite_in_leftmost_8_pixels(&self) -> bool {
         self.0 & (1 << 2) != 0
     }
 
@@ -336,6 +336,7 @@ impl PStatus {
     }
 }
 
+#[derive(Debug)]
 pub enum SpriteEvaluationState {
     Idle, Copy, Search,
 }
@@ -380,15 +381,15 @@ impl Sprite {
         (self.attribute & 0b11) + 4
     }
 
-    pub fn in_front_of_background(&self) -> bool {
-        self.attribute.is_b4_set()
+    pub fn behind_background(&self) -> bool {
+        self.attribute.is_b5_set()
     }
 }
 
 pub struct State {
     frame_buffer: FrameBuffer,
     frame_buffer_cursor: usize,
-    palette: Palette,
+    pub palette: Palette,
 
     n_dot: usize,
     n_scanline: usize,
@@ -406,11 +407,12 @@ pub struct State {
 
     pub secondary_oam: [u8; 4 * 8],
     secondary_oam_cursor: usize,
-    sprite_nums_on_scanline: usize,
+    sprite_nums_on_next_scanline: usize,
     sprite_evaluation_state: SpriteEvaluationState,
 
     sprite_list: [Sprite; 8],
     sprite_list_cursor: usize,
+    sprite_0_on_next_scanline: bool,
     sprite_0_on_current_scanline: bool,
 
     sprite_y_latch: u8,
@@ -418,7 +420,7 @@ pub struct State {
     sprite_attribute_latch: u8,
     // sprite_x_latch: u8,
 
-    palette_ram: [u8; 32],
+    pub palette_ram: [u8; 32],
 
     current_addr: PpuAddr,
     temporary_addr: PpuAddr,
@@ -439,7 +441,13 @@ pub struct State {
     attribute_shift_lo: u16,
     attribute_shift_hi: u16,
 
-    nmi_triggered: bool,
+    nmi_already_triggered: bool,
+    nmi_ready_to_trigger: bool,
+
+    skip_one_tick: bool,
+
+    vblank_suppress_flag: bool,
+
 }
 
 impl State {
@@ -461,10 +469,11 @@ impl State {
             is_odd_frame: false,
             secondary_oam: [0; 4 * 8],
             secondary_oam_cursor: 0,
-            sprite_nums_on_scanline: 0,
+            sprite_nums_on_next_scanline: 0,
             sprite_evaluation_state: SpriteEvaluationState::Idle,
             sprite_list: [Sprite::new(); 8],
             sprite_list_cursor: 0,
+            sprite_0_on_next_scanline: false,
             sprite_0_on_current_scanline: false,
             sprite_y_latch: 0,
             sprite_tile_addr_latch: 0,
@@ -484,7 +493,10 @@ impl State {
             background_shift_hi: 0,
             attribute_shift_lo: 0,
             attribute_shift_hi: 0,
-            nmi_triggered: false, 
+            nmi_already_triggered: false,
+            skip_one_tick: false,
+            vblank_suppress_flag: false,
+            nmi_ready_to_trigger: false,
         }
     }
 }
@@ -552,16 +564,24 @@ impl<T: Context> Private for T {}
 impl<T: Context> Interface for T {}
 trait Private: Sized + Context {
     fn tick(&mut self) {
-        let n_dot = self.state().n_dot;
-        let n_scanline = self.state().n_scanline;
+        self.try_to_trigger_nmi();
 
-        match (n_scanline, n_dot) {
+        match (self.state().n_scanline, self.state().n_dot) {
             (0, 0) => {
-                if self.state().is_odd_frame {
+                self.state_mut().sprite_0_on_current_scanline = self.state().sprite_0_on_next_scanline;
+                self.state_mut().sprite_0_on_next_scanline = false;
+                self.state_mut().secondary_oam_cursor = 0;
+                if self.state().skip_one_tick {
                     self.state_mut().n_dot += 1;
-                    self.tick();
-                    return;
+                    self.state_mut().skip_one_tick = false;
+                    self.draw_pixel();
+                    self.prepare_render_data();
                 }
+            }
+            (_, 0) => {
+                self.state_mut().sprite_0_on_current_scanline = self.state().sprite_0_on_next_scanline;
+                self.state_mut().sprite_0_on_next_scanline = false;
+                self.state_mut().secondary_oam_cursor = 0;
             }
             (0..=239, 1..=256) => {
                 self.draw_pixel();
@@ -570,19 +590,21 @@ trait Private: Sized + Context {
             (0..=239, _) => {
                 self.prepare_render_data();
             }
-            (240, _) => {
-                self.state_mut().frame_buffer_cursor = 0;
-            }
             (241, 1) => {
-                self.state_mut().pstatus.set_vblank_occured(true);
-                self.try_to_trigger_nmi();
+                self.state_mut().frame_buffer_cursor = 0;
+                if !self.state_mut().vblank_suppress_flag {
+                    self.state_mut().pstatus.set_vblank_occured(true);
+                }
                 self.generate_frame();
+            }
+            (260, 340) => {
+                self.state_mut().is_odd_frame = !self.state().is_odd_frame;
             }
             (261, 1) => {
                 self.state_mut().pstatus.set_vblank_occured(false);
                 self.state_mut().pstatus.set_sprite_overflow(false);
                 self.state_mut().pstatus.set_sprite_0_hit(false);
-                self.state_mut().nmi_triggered = false;
+                self.state_mut().nmi_already_triggered = false;
                 self.prepare_render_data();
             }
             (261, _) => {
@@ -590,12 +612,14 @@ trait Private: Sized + Context {
             }
             (_, _) => {}
         }
-        
-        match (n_scanline, n_dot) {
+
+        match (self.state().n_scanline, self.state().n_dot) {
             (261, 340) => {
                 self.state_mut().n_scanline = 0;
                 self.state_mut().n_dot = 0;
-                self.state_mut().is_odd_frame = !self.state().is_odd_frame;
+                if self.state().is_odd_frame && self.state().pmask.show_background() {
+                    self.state_mut().skip_one_tick = true;
+                }
             }
             (_, 340) => {
                 self.state_mut().n_scanline += 1;
@@ -605,7 +629,7 @@ trait Private: Sized + Context {
                 self.state_mut().n_dot += 1;
             }
         }
-        
+        self.state_mut().vblank_suppress_flag = false;
     }
 
     fn prepare_render_data(&mut self) {
@@ -617,7 +641,6 @@ trait Private: Sized + Context {
             1 => {
                 self.shift_sprite_registers();
                 self.shift_background_registers();
-                self.state_mut().secondary_oam_cursor = 0;
                 self.tick_clear_secondary_oam()
             }
             2..=64 => {
@@ -630,7 +653,8 @@ trait Private: Sized + Context {
                 self.shift_background_registers();
                 self.state_mut().sprite_evaluation_state = SpriteEvaluationState::Search;
                 self.state_mut().secondary_oam_cursor = 0;
-                self.state_mut().primary_oam_cursor = 0;
+                self.state_mut().primary_oam_cursor = self.state().oamaddr;
+                self.state_mut().sprite_nums_on_next_scanline = 0;
                 self.tick_sprite_evaluation()
             }
             66..=256 => {
@@ -638,18 +662,21 @@ trait Private: Sized + Context {
                 self.shift_background_registers();
                 self.tick_sprite_evaluation() 
             }
+            321..=336 => {
+                self.shift_background_registers();
+            }
             _ => {}
         }
 
         // fetch tiles and set registers
         match n_dot {
-            1 => {
+            1 | 321 => {
                 self.bg_latch_tile_index_addr();
             }
             2..=255 | 322..=336 => {
                 match n_dot & 0b111 {
                     // nametable
-                    1 => { self.bg_latch_tile_index_addr(); self.reload_background_registers() }
+                    1 => { self.bg_latch_tile_index_addr() }
                     2 => { self.bg_latch_tile_index() }
                     // attribute
                     3 => { self.bg_latch_attribute_addr() }
@@ -659,22 +686,25 @@ trait Private: Sized + Context {
                     6 => { self.bg_latch_tile_lo() }
                     // background tile high bits
                     7 => { self.bg_latch_tile_hi_addr() }
-                    0 => { self.bg_latch_tile_hi(); self.h_scroll(); }
+                    0 => { self.bg_latch_tile_hi(); self.h_scroll(); self.reload_background_registers() }
                     _ => unreachable!()
                 }
             }
             256 => {
                 self.bg_latch_tile_hi(); 
+                self.reload_background_registers();
+                self.h_scroll();
                 self.v_scroll();
             }
             257 => {
-                self.reload_background_registers(); 
+                // self.state_mut().oamaddr = 0;
                 self.h_update();
                 self.state_mut().secondary_oam_cursor = 0;
                 self.state_mut().sprite_list_cursor = 0;
-                self.sp_latch_y()
+                self.sp_latch_y();
             }
             258..=320 => {
+                // self.state_mut().oamaddr = 0;
                 match n_dot & 0b111 {
                     1 => { self.sp_latch_y() }
                     2 => { self.sp_latch_tile_addr() }
@@ -687,9 +717,7 @@ trait Private: Sized + Context {
                     _ => unreachable!()
                 }
             }
-            321 => { self.bg_latch_tile_index_addr() }
-            // 322..=336 => { ... }
-            337 => { self.bg_latch_tile_index_addr(); self.reload_background_registers() }
+            337 => { self.bg_latch_tile_index_addr() }
             338 => { self.bg_latch_tile_index() }
             339 => { self.bg_latch_tile_index_addr() }
             340 => { self.bg_latch_tile_index(); }
@@ -702,18 +730,24 @@ trait Private: Sized + Context {
 
     fn try_to_trigger_nmi(&mut self) {
         if self.state().pstatus.vblank_occured() && self.state().pctrl.nmi_output() {
-            if !self.state().nmi_triggered {
-                self.trigger_nmi();
-                self.state_mut().nmi_triggered = true;
+            if !self.state().nmi_already_triggered {
+                if self.state().nmi_ready_to_trigger {
+                    self.trigger_nmi();
+                    self.state_mut().nmi_ready_to_trigger = false;
+                    self.state_mut().nmi_already_triggered = true;
+                }
+                else {
+                    self.state_mut().nmi_ready_to_trigger = true;
+                }
             }
         }
         else {
-            self.state_mut().nmi_triggered = false;
+            self.state_mut().nmi_already_triggered = false;
         }
     }
 
     fn pixel_sprite(&self) -> (u8, u8, bool, bool) {
-        if self.state().pmask.show_sprites() && (self.state().pmask.show_sp_in_leftmost_8_pixels() || self.state().n_dot >= 8) {
+        if self.state().pmask.show_sprites() && (self.state().pmask.show_sprite_in_leftmost_8_pixels() || self.state().n_dot > 8) {
             for (nth, sprite) in self.state().sprite_list.iter().enumerate() {
                 if sprite.countdown != 0 { continue; }
 
@@ -723,19 +757,19 @@ trait Private: Sized + Context {
                 if pattern_lo == 0 && pattern_hi == 0 { continue; }
 
                 let color_index = pattern_lo | (pattern_hi << 1);
-                let priority = sprite.in_front_of_background();
+                let sp_behind_background = sprite.behind_background();
                 let color_set_index = sprite.color_set_index();
-                return (color_index, color_set_index, priority, nth == 0)
+                return (color_set_index, color_index, sp_behind_background, nth == 0)
             }
         }
-        (0, 0, true, false)
+        (0, 0, false, false)
     }
 
     fn pixel_background(&self) -> (u8, u8) {
-        if self.state().pmask.show_background() && (self.state().pmask.show_background_in_leftmost_8_pixels() || self.state().n_dot >= 8) {
-            let shift = self.state().fine_x + 8;
-            let pattern_lo = (self.state().background_shift_lo >> shift) & 1; // << (7 - self.local_pixel_coordinate_x())) & 1;
-            let pattern_hi = (self.state().background_shift_hi >> shift) & 1; // (7 - self.local_pixel_coordinate_x())) & 1;
+        if self.state().pmask.show_background() && (self.state().pmask.show_background_in_leftmost_8_pixels() || self.state().n_dot > 8) {
+            let shift = (7 - self.state().fine_x) + 8;
+            let pattern_lo = (self.state().background_shift_lo >> shift) & 1;
+            let pattern_hi = (self.state().background_shift_hi >> shift) & 1;
             let color_set_index_lo = (self.state().attribute_shift_lo >> shift) & 1;
             let color_set_index_hi = (self.state().attribute_shift_hi >> shift) & 1;
 
@@ -751,14 +785,14 @@ trait Private: Sized + Context {
     fn draw_pixel(&mut self) {
         debug_assert!(self.state().frame_buffer_cursor < SCREEN_SIZE);
 
-        let (sp_color_set_index, sp_color_index, prioirty, is_sprite_0) = self.pixel_sprite();
+        let (sp_color_set_index, sp_color_index, sp_behind_background, is_sprite_0) = self.pixel_sprite();
         let (bg_color_set_index, bg_color_index) = self.pixel_background();
         
-        if self.state().sprite_0_on_current_scanline && sp_color_index != 0 && bg_color_index != 0 && is_sprite_0 && self.state().n_dot != 255 {
+        if self.state().sprite_0_on_current_scanline && sp_color_index != 0 && bg_color_index != 0 && is_sprite_0 && self.state().n_dot != 256 {
             self.state_mut().pstatus.set_sprite_0_hit(true);
         }
 
-        let palette_ram_index = match (bg_color_index, sp_color_index, prioirty) {
+        let palette_ram_index = match (bg_color_index, sp_color_index, sp_behind_background) {
             (0, 0, _) => 0,
             (0, _, _) => (sp_color_set_index << 2) | sp_color_index,
             (_, 0, _) => (bg_color_set_index << 2) | bg_color_index,
@@ -770,24 +804,21 @@ trait Private: Sized + Context {
 
         // let emphasized_palette_index = (palette_index | (self.state().pmask.emphasize_bits() << 6)) as usize;
         let mut rgb = self.state().palette.get_rgb(palette_index);
-        let r = rgb.r as f32;
-        let g = rgb.r as f32;
-        let b = rgb.r as f32;
 
         if self.state().pmask.emphasize_red() {
-            rgb.r = (r * 1.1) as u8;
-            rgb.g = (g * 0.9) as u8;
-            rgb.b = (b * 0.9) as u8;
+            rgb.r = (rgb.r as f32 *1.1) as u8;
+            rgb.g = (rgb.g as f32 *0.9) as u8;
+            rgb.b = (rgb.b as f32 *0.9) as u8;
         }
         if self.state().pmask.emphasize_green() {
-            rgb.r = (r * 0.9) as u8;
-            rgb.g = (g * 1.1) as u8;
-            rgb.b = (b * 0.9) as u8;
+            rgb.r = (rgb.r as f32 *0.9) as u8;
+            rgb.g = (rgb.g as f32 *1.1) as u8;
+            rgb.b = (rgb.b as f32 *0.9) as u8;
         }
         if self.state().pmask.emphasize_blue() {
-            rgb.r = (r * 0.9) as u8;
-            rgb.g = (g * 0.9) as u8;
-            rgb.b = (b * 1.1) as u8;
+            rgb.r = (rgb.r as f32 *0.9) as u8;
+            rgb.g = (rgb.g as f32 *0.9) as u8;
+            rgb.b = (rgb.b as f32 *1.1) as u8;
         }
         
         let index = self.state().frame_buffer_cursor;
@@ -796,56 +827,66 @@ trait Private: Sized + Context {
     }
 
     fn tick_clear_secondary_oam(&mut self) {
+        if self.state().n_scanline == 261 {
+            return;
+        }
         let index = self.state().secondary_oam_cursor;
         self.state_mut().secondary_oam[index] = 0xff;
         self.state_mut().secondary_oam_cursor = (index + 1) % 32;
     }
 
     fn tick_sprite_evaluation(&mut self) {
-        let mut state = self.state_mut();
-        let scanline = state.n_scanline;
-        let is_odd_cycle = state.n_dot & 1 == 1;
-        
-        if is_odd_cycle && state.primary_oam_cursor < 256 {
-            let primary_oam_cursor = state.primary_oam_cursor;
-            state.primary_oam_latch = state.oamdata[primary_oam_cursor];
-            state.primary_oam_cursor = primary_oam_cursor + 1;
+        if self.state().n_dot & 1 == 1 && self.state().primary_oam_cursor < 256 {
+            let index = self.state().primary_oam_cursor;
+            self.state_mut().primary_oam_latch = self.state().oamdata[index];
+            self.state_mut().primary_oam_cursor = index + 1;
+            return;
         }
-        else {
-            match state.sprite_evaluation_state {
-                SpriteEvaluationState::Search => {
-                    let index = state.secondary_oam_cursor;
-                    let value = state.primary_oam_latch;
-                    state.secondary_oam[index] = value;
 
-                    let y = value as usize;
-                    if (y <= scanline) && (scanline < y + state.pctrl.sprite_length()) {
-                        state.secondary_oam_cursor += 1;
-                        state.sprite_evaluation_state = SpriteEvaluationState::Copy;
-                        state.sprite_0_on_current_scanline = state.secondary_oam_cursor == 0 && state.primary_oam_cursor == 1;
+        let value = self.state().primary_oam_latch;
+        let index = self.state().secondary_oam_cursor;
+        match self.state().sprite_evaluation_state {
+            SpriteEvaluationState::Search => {
+                let sprite_top = value as usize;
+                let sprite_bottom = sprite_top + self.state().pctrl.sprite_length();
+                let scanline_y = self.state().n_scanline;
+                let scanline_hit_sprite = (sprite_top <= scanline_y) && (scanline_y < sprite_bottom) && sprite_top != 255;
+                
+                if scanline_hit_sprite {
+                    if self.state().primary_oam_cursor == 1 {
+                        self.state_mut().sprite_0_on_next_scanline = self.state().secondary_oam_cursor == 0;
+                    }
+                    if self.state().sprite_nums_on_next_scanline >= 8 {
+                        if self.state().pmask.show_background() || self.state().pmask.show_sprites() {
+                            self.state_mut().pstatus.set_sprite_overflow(true);
+                        }
+                        self.state_mut().sprite_evaluation_state = SpriteEvaluationState::Idle;
                     }
                     else {
-                        state.primary_oam_cursor += 3;  // skip this sprite
-                        if self.state().primary_oam_cursor >= 256 {
-                            self.state_mut().sprite_evaluation_state = SpriteEvaluationState::Idle;
-                        }
+                        self.state_mut().secondary_oam_cursor = index + 1;
+                        self.state_mut().sprite_evaluation_state = SpriteEvaluationState::Copy;
+                    } 
+                }
+                else {
+                    self.state_mut().primary_oam_cursor += 3;
+                    if self.state().primary_oam_cursor >= 256 {
+                        self.state_mut().sprite_evaluation_state = SpriteEvaluationState::Idle;
                     }
                 }
-                SpriteEvaluationState::Copy => {
-                    let index = state.secondary_oam_cursor;
-                    let value = state.primary_oam_latch;
-                    state.secondary_oam[index] = value;
-                    if (index + 1) % 4 == 0 {
-                        state.secondary_oam_cursor = index + 1;
-                        state.sprite_nums_on_scanline += 1;
-                        state.sprite_evaluation_state = SpriteEvaluationState::Search;
-                    }
-                    if state.sprite_nums_on_scanline >= 8 {
-                        state.sprite_evaluation_state = SpriteEvaluationState::Idle;
-                    }
+
+                if self.state().sprite_nums_on_next_scanline < 8 {
+                    self.state_mut().secondary_oam[index] = value;
                 }
-                SpriteEvaluationState::Idle => {}
+            },
+            SpriteEvaluationState::Copy => {
+                self.state_mut().secondary_oam[index] = value;
+                self.state_mut().secondary_oam_cursor = index + 1;
+                if (index + 1) & 0b11 == 0 {
+                    self.state_mut().sprite_nums_on_next_scanline += 1;
+                    self.state_mut().sprite_evaluation_state = SpriteEvaluationState::Search;
+                }
             }
+            SpriteEvaluationState::Idle => {}
         }
     }
 
@@ -868,6 +909,8 @@ trait Private: Sized + Context {
         let value = self.state().secondary_oam[self.state().secondary_oam_cursor];
         self.state_mut().sprite_attribute_latch = value;
         self.state_mut().secondary_oam_cursor += 1;
+        let sprite_index = self.state().sprite_list_cursor;
+        self.state_mut().sprite_list[sprite_index].attribute = value;
     }
 
     #[inline]
@@ -887,7 +930,7 @@ trait Private: Sized + Context {
 
     #[inline]
     fn sp_set_lo_shift(&mut self) {
-        let hi = self.sprite_tile_hi_addr().fetch_hi();
+        let hi = self.sprite_tile_lo_addr().fetch_hi();
         self.state_mut().address_latch.set_hi(hi);
         let mut value = self.load(self.state().address_latch);
         let flip_horizontally = self.state().sprite_attribute_latch.is_b6_set();
@@ -912,7 +955,7 @@ trait Private: Sized + Context {
         let sprite_index = self.state().sprite_list_cursor;
         self.state_mut().sprite_list[sprite_index].set_hi_tile_shift(value);
 
-        self.state_mut().sprite_list_cursor += 1;
+        self.state_mut().sprite_list_cursor = sprite_index + 1;
         self.state_mut().secondary_oam_cursor += 1;
     }
 
@@ -965,7 +1008,7 @@ trait Private: Sized + Context {
                 sprite.hi_tile_shift <<= 1;
                 sprite.lo_tile_shift <<= 1;
             }
-            else {
+            else if sprite.countdown != 255 {
                 sprite.countdown -= 1;
             }
         }
@@ -991,6 +1034,7 @@ trait Private: Sized + Context {
         self.state_mut().attribute_latch = self.load(self.state().address_latch);
         if (self.state().current_addr.get_corase_y() & 2) != 0 { self.state_mut().attribute_latch >>= 4 };
         if (self.state().current_addr.get_corase_x() & 2) != 0 { self.state_mut().attribute_latch >>= 2 };
+        self.state_mut().attribute_latch &= 0b11;
     }
 
     #[inline]
@@ -1059,11 +1103,6 @@ trait Private: Sized + Context {
         } else {
             address &= 32 - 1;
             debug_assert!((address as usize) < self.state_mut().palette_ram.len());
-            if (address & 0b11) == 0 { // mirror
-                if address >= 16 {
-                    address -= 16;
-                }
-            }
             self.state().palette_ram[address as usize]
         }
     }
@@ -1075,9 +1114,13 @@ trait Private: Sized + Context {
             address &= 32 - 1;
             debug_assert!((address as usize) < self.state_mut().palette_ram.len());
             value &= 64 - 1;
+            self.state_mut().palette_ram[address as usize] = value;
             if (address & 0b11) == 0 { // mirror
                 if address >= 16 {
                     address -= 16;
+                }
+                else {
+                    address += 16;
                 }
             }
             self.state_mut().palette_ram[address as usize] = value;
@@ -1109,6 +1152,7 @@ trait Private: Sized + Context {
 
     fn read_ppudata(&mut self) -> u8 {
         let addr = self.state().current_addr.0 & 0x3FFF;
+        // http://wiki.nesdev.com/w/index.php/PPU_registers#Data_.28.242007.29_.3C.3E_read.2Fwrite
         let mut value = self.load(addr);
         self.increase_current_address();
         if addr < 0x3f00 {
@@ -1117,8 +1161,7 @@ trait Private: Sized + Context {
             old
         }
         else {
-            // self.state_mut().ppudata_buffer = self.peek_vram(addr);
-            self.state_mut().ppudata_latch = self.load(addr);
+            self.state_mut().ppudata_latch = self.load(addr & 0x2fff);
             if self.state().pmask.greyscale_mode() {
                 value &= 0b110000;
             }
@@ -1133,9 +1176,10 @@ trait Private: Sized + Context {
     }
 
     fn read_ppustatus(&mut self) -> u8 {
+        self.state_mut().vblank_suppress_flag = true;
         let value = self.state().pstatus.0;
         self.state_mut().pstatus.set_vblank_occured(false);
-        self.state_mut().nmi_triggered = false;
+        self.state_mut().nmi_ready_to_trigger = false;
         self.state_mut().write_toggle = false;
         value
     }
@@ -1144,7 +1188,6 @@ trait Private: Sized + Context {
         self.state_mut().pctrl.0 = value;
         let nn = self.state().pctrl.get_nn();
         self.state_mut().temporary_addr.set_nn(nn);
-        self.try_to_trigger_nmi();
     }
 
     fn write_ppumask(&mut self, value: u8) {
@@ -1158,7 +1201,9 @@ trait Private: Sized + Context {
 
     fn write_oamdata(&mut self, value: u8) {
         let index = self.state().oamaddr;
-        self.state_mut().oamdata[index] = value;
+        if !(self.state().n_scanline < 240 && self.state().n_scanline == 261) {
+            self.state_mut().oamdata[index] = value;
+        }
         self.state_mut().oamaddr = (index + 1) & 0xFF;
     }
 

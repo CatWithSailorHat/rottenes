@@ -51,7 +51,7 @@ impl Mapper for State {
     fn vpeek_nametable(&mut self, addr: u16) -> u8 {
         let index = if self.rom.mirroring == MirrorMode::H {
             let t = addr & 0xBFF;
-            if t > 0x7FF { t & 0x7FF } else { t }
+            if t > 0x7FF { (t & 0x7FF) + 0x400 } else { t }
         } else {
             addr & 0x7FF
         } as usize;
@@ -61,7 +61,7 @@ impl Mapper for State {
     fn vpoke_nametable(&mut self, addr: u16, val: u8) {
         let index = if self.rom.mirroring == MirrorMode::H {
             let t = addr & 0xBFF;
-            if t > 0x7FF { t & 0x7FF } else { t }
+            if t > 0x7FF { (t & 0x7FF) + 0x400 } else { t }
         } else {
             addr & 0x7FF
         } as usize;

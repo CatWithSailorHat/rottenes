@@ -1,4 +1,4 @@
-use crate::rom::Rom;
+use crate::{bitmisc::U8BitTest, rom::Rom};
 use crate::cpu;
 use crate::ppu;
 
@@ -15,6 +15,19 @@ pub enum DmaState {
     OmaDma(u8),
 }
 
+bitflags! {
+    pub struct StandardInput: u8 {
+        const RIGHT =  1 << 0;
+        const LEFT =   1 << 1;
+        const DOWN =   1 << 2;
+        const UP =     1 << 3;
+        const START =  1 << 4;
+        const SELECT = 1 << 5;
+        const B =      1 << 6;
+        const A =      1 << 7;
+    }
+}
+
 pub struct State {
     ppu: ppu::State,
     mos6502: cpu::State,
@@ -23,6 +36,12 @@ pub struct State {
     cpu_cycle: Wrapping<usize>,
     dma_state: DmaState,
     frame_generated: bool,
+
+    input_1_offset: usize,
+    input_2_offset: usize,
+    input_1_mask: StandardInput,
+    input_2_mask: StandardInput,
+    input_strobe: bool,
 }
 
 impl State {
@@ -35,6 +54,11 @@ impl State {
             cpu_cycle: Wrapping(0),
             dma_state: DmaState::NoDma,
             frame_generated: false,
+            input_1_offset: 0,
+            input_2_offset: 0,
+            input_1_mask: StandardInput::empty(),
+            input_2_mask: StandardInput::empty(),
+            input_strobe: false,
         }
     }
 }
@@ -63,6 +87,7 @@ pub trait Interface: Sized + Context {
             cpu::Interface::step(self);
         }
         self.state_mut().frame_generated = false;
+        // self.clear_input_mask();
     }
 
     fn reset(&mut self) {
@@ -75,6 +100,19 @@ pub trait Interface: Sized + Context {
 
     fn get_framebuffer(&self) -> &ppu::FrameBuffer {
         ppu::Interface::get_framebuffer(self)
+    }
+
+    fn dbg_list_palette_ram(&self) -> [ppu::RgbColor; 32] {
+        let mut result = [ppu::RgbColor::default(); 32];
+        for i in 0x00..=0x1fusize {
+            let rgb = self.state().ppu.palette.get_rgb(self.state().ppu.palette_ram[i] as usize);
+            result[i] = rgb;
+        }
+        result
+    }
+
+    fn set_input_1(&mut self, input_1: StandardInput, value: bool) {
+        self.state_mut().input_1_mask.set(input_1, value);
     }
 }
 
@@ -91,12 +129,14 @@ impl<C: Context> cpu::Context for C {
             }
             
             let base_read_addr = (v as u16) << 8;
-            for i in 0usize..=511 {
+            for i in 0usize..=255 {
                 self.on_cpu_cycle();
                 let value = Private::access(self, base_read_addr + i as u16, AccessMode::Read);
                 self.on_cpu_cycle();
-                self.state_mut().ppu.oamdata[i] = value;
+                let index = (i + self.state().ppu.oamaddr) & 0xFF;
+                self.state_mut().ppu.oamdata[index] = value;
             }
+            self.state_mut().dma_state = DmaState::NoDma;
         }
 
         self.on_cpu_cycle();
@@ -151,6 +191,11 @@ enum AccessMode {
     Write(u8),
 }
 trait Private: Sized + Context {
+    fn clear_input_mask(&mut self) {
+        self.state_mut().input_1_mask = StandardInput::empty();
+        self.state_mut().input_2_mask = StandardInput::empty();
+    }
+
     fn load_from_stream<R: Read + Seek>(&mut self, stream: &mut R) -> Result<(), LoadError> {
         let rom = Rom::parse(stream)?;
         let mapper = mapper::create_mapper(rom)?;
@@ -202,7 +247,7 @@ trait Private: Sized + Context {
                     (7, AccessMode::Write(value)) => {
                         ppu::Interface::write_ppudata(self, value); value
                     }
-                    (_, _) => panic!("Invalid register access"),
+                    (_, _) => panic!("Invalid register access {:x}", addr),
                 }
             },
             0x4014 => {
@@ -215,7 +260,36 @@ trait Private: Sized + Context {
                 }
                 
             },
-            0x4000..=0x4013 | 0x4015..=0x401F => {
+            0x4016 => {
+                match mode {
+                    AccessMode::Read => {
+                        if !self.state_mut().input_strobe {
+                            let d0 = if ((self.state().input_1_mask.bits << self.state().input_1_offset) & 0b1000_0000) == 0 { 
+                                0u8 
+                            } else { 
+                                1u8 
+                            } << 0;
+                            self.state_mut().input_1_offset += 1;
+                            d0
+                        }
+                        else {
+                            0u8
+                        }
+                    },
+                    AccessMode::Write(value) => {
+                        self.state_mut().input_strobe = value.is_b0_set();
+                        if self.state().input_strobe {
+                            self.state_mut().input_1_offset = 0;
+                            self.state_mut().input_2_offset = 0;
+                        }
+                        value
+                    }
+                }
+            },
+            0x4017 => {
+                0
+            }
+            0x4000..=0x4013 | 0x4018..=0x401F | 0x4015 => {
                 0  // FIXME
             },
             0x4020..=0x5FFF => {
