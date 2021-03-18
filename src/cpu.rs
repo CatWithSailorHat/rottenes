@@ -1,9 +1,11 @@
 // #![allow(dead_code)]
 
 use std::{num::Wrapping};
+use serde::{Serialize, Deserialize};
 use crate::bitmisc::U16Address;
 
 bitflags! {
+    #[derive(Serialize, Deserialize)]    
     pub struct Flags: u8 {
         /// carry flag
         const C = 1 << 0;
@@ -28,6 +30,7 @@ const INT_NMI_ADDRESS: u16 = 0xFFFA;
 const INT_IRQ_BRK_ADDRESS: u16 = 0xFFFE;
 const INT_RESET_ADDRESS: u16 = 0xFFFC;
 
+#[derive(Serialize, Deserialize)]
 #[allow(non_snake_case)]
 pub struct Registers {
     pub A: u8, pub X: u8, pub Y: u8, pub SP: u8, pub PC: u16, pub P: Flags,
@@ -54,6 +57,7 @@ impl Registers {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct State {
     pub regs: Registers,
     pub nmi: bool,

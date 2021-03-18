@@ -1,9 +1,10 @@
 // #![allow(dead_code)]
 use super::bitmisc::{ U16Address, U8BitTest };
+use serde::{Serialize, Deserialize};
 
 pub const SCREEN_SIZE: usize = 256 * 240;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 pub struct RgbColor {
     pub r: u8,
     pub g: u8,
@@ -20,9 +21,8 @@ impl RgbColor {
     }
 }
 
-pub type FrameBuffer = [RgbColor; SCREEN_SIZE];
-
-pub struct Palette([RgbColor; 64]);
+#[derive(Serialize, Deserialize)]
+pub struct Palette(Vec<RgbColor>);
 impl Palette {
     fn new(data: &[u8]) -> Self {
         assert!(data.len() == 64*3);
@@ -33,7 +33,7 @@ impl Palette {
             palette[index].g = rgb[1];
             palette[index].b = rgb[2];
         }
-        Palette(palette)
+        Palette(palette.to_vec())
     }
 
     pub fn get_rgb(&self, index: usize) -> RgbColor {
@@ -41,7 +41,7 @@ impl Palette {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Copy, Clone, Serialize, Deserialize)]
 pub struct PpuAddr(u16);
 impl PpuAddr {
     // yyy NN YYYYY XXXXX
@@ -189,6 +189,7 @@ impl PpuAddr {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct PCtrl(u8);
 impl PCtrl {
     pub fn new(v: u8) -> Self {
@@ -247,6 +248,7 @@ impl PCtrl {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct PMask(u8);
 impl PMask {
     pub fn new(v: u8) -> Self {
@@ -290,6 +292,7 @@ impl PMask {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct PStatus(u8);
 impl PStatus {
     pub fn new(v: u8) -> Self {
@@ -336,12 +339,12 @@ impl PStatus {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum SpriteEvaluationState {
     Idle, Copy, Search,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 pub struct Sprite {
     pub x_pos: u8,
     pub y_pos: u8,
@@ -386,8 +389,9 @@ impl Sprite {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct State {
-    frame_buffer: FrameBuffer,
+    frame_buffer: Vec<RgbColor>,
     frame_buffer_cursor: usize,
     pub palette: Palette,
 
@@ -401,7 +405,7 @@ pub struct State {
     // pub name_table: [u8; 2048],
 
     pub oamaddr: usize,
-    pub oamdata: [u8; 64 * 4],
+    pub oamdata: Vec<u8>,
     primary_oam_cursor: usize,
     primary_oam_latch: u8,
 
@@ -454,7 +458,7 @@ impl State {
     pub fn new() -> Self {
         let palette_bytes = include_bytes!("./palette.pal");
         State {
-            frame_buffer: [RgbColor::new(0, 0, 0); SCREEN_SIZE],
+            frame_buffer: [RgbColor::new(0, 0, 0); SCREEN_SIZE].to_vec(),
             frame_buffer_cursor: 0,
             palette: Palette::new(palette_bytes),
             n_dot: 0,
@@ -463,7 +467,7 @@ impl State {
             pmask: PMask::new(0),
             pstatus: PStatus::new(0),
             oamaddr: 0,
-            oamdata: [0; 64 * 4],
+            oamdata: [0; 64 * 4].to_vec(),
             primary_oam_cursor: 0,
             primary_oam_latch: 0,
             is_odd_frame: false,
@@ -515,7 +519,7 @@ pub trait Interface: Sized + Context {
         Private::tick(self);
     }
 
-    fn get_framebuffer(&self) -> &FrameBuffer {
+    fn get_framebuffer(&self) -> &Vec<RgbColor> {
         &self.state().frame_buffer
     }
 

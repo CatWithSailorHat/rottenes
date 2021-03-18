@@ -1,21 +1,24 @@
-use crate::{bitmisc::U8BitTest, rom::Rom};
+use crate::{bitmisc::U8BitTest, ppu::RgbColor, rom::Rom};
 use crate::cpu;
 use crate::ppu;
 
 use crate::mapper;
 use crate::error::LoadError;
 
+use serde::{Serialize, Deserialize};
 use std::{io::{Cursor}, num::Wrapping, path::Path};
 use std::fs::File;
 use std::io::prelude::*;
 use std::io::Read;
 
+#[derive(Serialize, Deserialize)]
 pub enum DmaState {
     NoDma,
     OmaDma(u8),
 }
 
 bitflags! {
+    #[derive(Serialize, Deserialize)]
     pub struct StandardInput: u8 {
         const RIGHT =  1 << 0;
         const LEFT =   1 << 1;
@@ -28,11 +31,11 @@ bitflags! {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct State {
     ppu: ppu::State,
     mos6502: cpu::State,
-    mapper: Option<Box<dyn mapper::Mapper>>,
-    ram: [u8; 0x800],
+    ram: Vec<u8>,
     cpu_cycle: Wrapping<usize>,
     dma_state: DmaState,
     frame_generated: bool,
@@ -49,8 +52,7 @@ impl State {
         State {
             ppu: ppu::State::new(),
             mos6502: cpu::State::new(),
-            mapper: None,
-            ram: [0; 0x800],
+            ram: [0; 0x800].to_vec(),
             cpu_cycle: Wrapping(0),
             dma_state: DmaState::NoDma,
             frame_generated: false,
@@ -64,30 +66,22 @@ impl State {
 }
 
 pub trait Context: Sized {
-    fn state_mut( &mut self ) -> &mut State;
-    fn state( &self ) -> &State;
+    fn state_mut(&mut self) -> &mut State;
+    fn state(&self) -> &State;
+
+    fn mapper(&mut self) -> &mut Box<dyn mapper::Mapper>;
 
     fn on_cycle(&mut self) {}
     fn on_frame(&mut self) {}
 }
 
 pub trait Interface: Sized + Context {
-    fn load_rom_from_file(&mut self, path: &Path) -> Result<(), LoadError>  {
-        let mut file = File::open(path).unwrap();
-        Private::load_from_stream(self, &mut file)
-    }
-
-    fn load_rom_from_bytes(&mut self, data: &[u8]) -> Result<(), LoadError>  {
-        let mut stream = Cursor::new(data);
-        Private::load_from_stream(self, &mut stream)
-    }
-
     fn run_for_one_frame(&mut self) {
         while !self.state().frame_generated {
             cpu::Interface::step(self);
         }
         self.state_mut().frame_generated = false;
-        // self.clear_input_mask();
+        Private::clear_input_mask(self);
     }
 
     fn reset(&mut self) {
@@ -98,7 +92,7 @@ pub trait Interface: Sized + Context {
         self.state().cpu_cycle.0
     }
 
-    fn get_framebuffer(&self) -> &ppu::FrameBuffer {
+    fn get_framebuffer(&self) -> &Vec<ppu::RgbColor> {
         ppu::Interface::get_framebuffer(self)
     }
 
@@ -113,6 +107,10 @@ pub trait Interface: Sized + Context {
 
     fn set_input_1(&mut self, input_1: StandardInput, value: bool) {
         self.state_mut().input_1_mask.set(input_1, value);
+    }
+
+    fn clear_input_mask(&mut self) {
+        Private::clear_input_mask(self)
     }
 }
 
@@ -194,13 +192,6 @@ trait Private: Sized + Context {
     fn clear_input_mask(&mut self) {
         self.state_mut().input_1_mask = StandardInput::empty();
         self.state_mut().input_2_mask = StandardInput::empty();
-    }
-
-    fn load_from_stream<R: Read + Seek>(&mut self, stream: &mut R) -> Result<(), LoadError> {
-        let rom = Rom::parse(stream)?;
-        let mapper = mapper::create_mapper(rom)?;
-        self.state_mut().mapper = Some(mapper);
-        Ok(())
     }
 
     fn access(&mut self, addr: u16, mode: AccessMode) -> u8 {
@@ -293,7 +284,7 @@ trait Private: Sized + Context {
                 0  // FIXME
             },
             0x4020..=0x5FFF => {
-                let mapper = self.state_mut().mapper.as_mut().unwrap();
+                let mapper = self.mapper();
                 match mode {
                     AccessMode::Read => {
                         mapper.peek_expansion_rom(addr)
@@ -304,7 +295,7 @@ trait Private: Sized + Context {
                 }
             }
             0x6000..=0x7FFF => {
-                let mapper = self.state_mut().mapper.as_mut().unwrap();
+                let mapper = self.mapper();
                 match mode {
                     AccessMode::Read => {
                         mapper.peek_sram(addr)
@@ -315,7 +306,7 @@ trait Private: Sized + Context {
                 }
             }
             0x8000..=0xFFFF => {
-                let mapper = self.state_mut().mapper.as_mut().unwrap();
+                let mapper =  self.mapper();
                 match mode {
                     AccessMode::Read => {
                         mapper.peek_prg_rom(addr)
@@ -329,9 +320,9 @@ trait Private: Sized + Context {
     }
 
     fn vaccess(&mut self, addr: u16, mode: AccessMode) -> u8 {
+        let mapper =  self.mapper();
         match addr {
             0x0000..= 0x1FFF => {
-                let mapper = self.state_mut().mapper.as_mut().unwrap();
                 match mode {
                     AccessMode::Read => {
                         mapper.vpeek_pattern(addr)
@@ -343,7 +334,6 @@ trait Private: Sized + Context {
             },
             0x2000..=0x3EFF => {
                 let addr = addr & 0x2FFF;
-                let mapper = self.state_mut().mapper.as_mut().unwrap();
                 match mode {
                     AccessMode::Read => {
                         mapper.vpeek_nametable(addr)

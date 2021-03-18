@@ -1,19 +1,21 @@
 use crate::error::LoadError;
-use std::{io::{Read, prelude::*}};
 use crate::bitmisc::U8BitTest;
+use std::{io::{Read, prelude::*}};
+use serde::{Serialize, Deserialize};
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Serialize, Deserialize)]
 pub enum NesVersion {
     V1,
     V2,
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Serialize, Deserialize)]
 pub enum MirrorMode {
     H,
     V,
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct Rom {
     pub prg_rom: Vec<u8>,
     pub prg_banks: usize,

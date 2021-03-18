@@ -1,38 +1,28 @@
-use std::path::Path;
+use std::{any::Any, path::Path};
 
-use crate::{error::LoadError, nes};
-
+use crate::{error::LoadError, emulator::Emulator, nes::StandardInput};
 
 use sdl2::pixels::Color;
 use sdl2::event::Event;
 use sdl2::rect::Rect;
 use sdl2::keyboard::Keycode;
-use std::time::Duration;
- 
+use std::time::Duration; 
 
 pub struct GuiObject {
-    nes: nes::State,
-}
-
-impl nes::Context for GuiObject {
-    fn state_mut(&mut self) -> &mut nes::State {
-        &mut self.nes
-    }
-
-    fn state(&self) -> &nes::State {
-        &self.nes
-    }
+    emulator: Emulator,
+    save_slot: Option<Vec<u8>>,
 }
 
 impl GuiObject {
     pub fn new() -> Self {
         GuiObject {
-            nes: nes::State::new(),
+            emulator: Emulator::new(),
+            save_slot: None,
         }
     }
 
     pub fn load_rom_from_file(&mut self, path: &Path) -> Result<(), LoadError> {
-        nes::Interface::load_rom_from_file(self, path)
+        self.emulator.load_rom_from_file(path)
     }
 
     pub fn run(&mut self) {
@@ -51,16 +41,16 @@ impl GuiObject {
         canvas.clear();
         canvas.present();
 
-        nes::Interface::reset(self);
+        self.emulator.reset();
 
         let mut event_pump = sdl_context.event_pump().unwrap();
         
         'running: loop {
             let start = Instant::now();
             // let start2 = Instant::now();
-            nes::Interface::run_for_one_frame(self);
+            self.emulator.run_for_one_frame();
             // println!("time cost: {:?} ms", start2.elapsed().as_millis());
-            let frame_buffer = nes::Interface::get_framebuffer(self);
+            let frame_buffer = self.emulator.get_framebuffer();
             for (i, rgb) in frame_buffer.iter().enumerate() {
                 let i = i as i32;
                 let x = i % 256;
@@ -68,72 +58,50 @@ impl GuiObject {
                 canvas.set_draw_color(Color::RGB(rgb.r, rgb.g, rgb.b));
                 canvas.fill_rect(Rect::new(x * magnifaction as i32, y * magnifaction as i32, magnifaction, magnifaction)).unwrap();
             }
-            // canvas.fill_rect(Rect::new(0, 240*3, 256*3, 12)).unwrap();
-            // for (i, rgb) in nes::Interface::dbg_list_palette_ram(self).iter().enumerate() {
-            //     canvas.set_draw_color(Color::RGB(rgb.r, rgb.g, rgb.b));
-            //     let i = i as i32;
-            //     let x = i % 256;
-            //     canvas.fill_rect(Rect::new(x*12, 240*3, 12, 12)).unwrap();
-            // }
 
             for event in event_pump.poll_iter() {
                 match event {
-                    Event::Quit {..} |
-                    Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
+                    Event::KeyDown { keycode: Some(Keycode::E), repeat: false, .. } => {
+                        self.save_slot = Option::Some(self.emulator.save_state());
+                    },
+                    Event::KeyDown { keycode: Some(Keycode::Q), repeat: false, .. } => {
+                        if let Some(v) = &self.save_slot {
+                            self.emulator.load_state(&v)
+                        }
+                    },
+                    Event::Quit {..}  => {
                         break 'running
-                    },
-                    Event::KeyDown { keycode: Some(Keycode::Return), .. } => {
-                        nes::Interface::set_input_1(self, nes::StandardInput::START, true)
-                    },
-                    Event::KeyDown { keycode: Some(Keycode::Space), .. } => {
-                        nes::Interface::set_input_1(self, nes::StandardInput::SELECT, true)
-                    },
-                    Event::KeyDown { keycode: Some(Keycode::W), .. } => {
-                        nes::Interface::set_input_1(self, nes::StandardInput::UP, true)
-                    },
-                    Event::KeyDown { keycode: Some(Keycode::S), .. } => {
-                        nes::Interface::set_input_1(self, nes::StandardInput::DOWN, true)
-                    },
-                    Event::KeyDown { keycode: Some(Keycode::A), .. } => {
-                        nes::Interface::set_input_1(self, nes::StandardInput::LEFT, true)
-                    },
-                    Event::KeyDown { keycode: Some(Keycode::D), .. } => {
-                        nes::Interface::set_input_1(self, nes::StandardInput::RIGHT, true)
-                    },
-                    Event::KeyDown { keycode: Some(Keycode::J), .. } => {
-                        nes::Interface::set_input_1(self, nes::StandardInput::B, true)
-                    },
-                    Event::KeyDown { keycode: Some(Keycode::K), .. } => {
-                        nes::Interface::set_input_1(self, nes::StandardInput::A, true)
-                    },
-
-                    Event::KeyUp { keycode: Some(Keycode::Return), .. } => {
-                        nes::Interface::set_input_1(self, nes::StandardInput::START, false)
-                    },
-                    Event::KeyUp { keycode: Some(Keycode::Space), .. } => {
-                        nes::Interface::set_input_1(self, nes::StandardInput::SELECT, false)
-                    },
-                    Event::KeyUp { keycode: Some(Keycode::W), .. } => {
-                        nes::Interface::set_input_1(self, nes::StandardInput::UP, false)
-                    },
-                    Event::KeyUp { keycode: Some(Keycode::S), .. } => {
-                        nes::Interface::set_input_1(self, nes::StandardInput::DOWN, false)
-                    },
-                    Event::KeyUp { keycode: Some(Keycode::A), .. } => {
-                        nes::Interface::set_input_1(self, nes::StandardInput::LEFT, false)
-                    },
-                    Event::KeyUp { keycode: Some(Keycode::D), .. } => {
-                        nes::Interface::set_input_1(self, nes::StandardInput::RIGHT, false)
-                    },
-                    Event::KeyUp { keycode: Some(Keycode::J), .. } => {
-                        nes::Interface::set_input_1(self, nes::StandardInput::B, false)
-                    },
-                    Event::KeyUp { keycode: Some(Keycode::K), .. } => {
-                        nes::Interface::set_input_1(self, nes::StandardInput::A, false)
                     },
                     _ => {}
                 }
             }
+
+            let keyboard_state = sdl2::keyboard::KeyboardState::new(&event_pump);
+            if keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::Return) {
+                self.emulator.set_input_1(StandardInput::START, true)
+            }
+            if keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::Space) {
+                self.emulator.set_input_1(StandardInput::SELECT, true)
+            }
+            if keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::W) {
+                self.emulator.set_input_1(StandardInput::UP, true)
+            }
+            if keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::S) {
+                self.emulator.set_input_1(StandardInput::DOWN, true)
+            }
+            if keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::A) {
+                self.emulator.set_input_1(StandardInput::LEFT, true)
+            }
+            if keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::D) {
+                self.emulator.set_input_1(StandardInput::RIGHT, true)
+            }
+            if keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::J) {
+                self.emulator.set_input_1(StandardInput::B, true)
+            }
+            if keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::K) {
+                self.emulator.set_input_1(StandardInput::A, true)
+            }
+            
             canvas.present();
             let t = start.elapsed().as_nanos();
             let wait = if (1_000_000_000u128 / 60) > t {

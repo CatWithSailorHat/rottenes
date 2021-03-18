@@ -1,27 +1,30 @@
 use super::Mapper;
 use crate::rom::{MirrorMode, Rom};
+use serde::{Serialize, Deserialize};
+use bincode;
 
-pub struct State {
+#[derive(Serialize, Deserialize)]
+pub struct Mappper000 {
     rom: Rom,
     mirror_prg: bool,
-    prg_ram: [u8; 0x2000],
-    vram: [u8; 0x800],
+    prg_ram: Vec<u8>,
+    vram: Vec<u8>,
 }
 
-impl State {
-    pub fn new(rom: Rom) -> State {
+impl Mappper000 {
+    pub fn new(rom: Rom) -> Mappper000 {
         assert!(rom.prg_banks <= 2);
         let mirror_rom = rom.prg_banks == 1;
-        State {
+        Mappper000 {
             rom,
             mirror_prg: mirror_rom,
-            prg_ram: [0; 0x2000],
-            vram: [0; 0x800],
+            prg_ram: [0; 0x2000].to_vec(),
+            vram: [0; 0x800].to_vec(),
         }
     }
 }
 
-impl Mapper for State {
+impl Mapper for Mappper000 {
     fn peek_expansion_rom(&mut self, addr: u16) -> u8 {
         unimplemented!()
     }
@@ -74,5 +77,14 @@ impl Mapper for State {
 
     fn vpoke_pattern(&mut self, addr: u16, val: u8) {
         self.rom.chr_rom[(addr & 0x1FFF) as usize] = val;
+    }
+
+    fn load_state(&mut self, state: Vec<u8>) {
+        let mapper: Self = bincode::deserialize(&state[..]).unwrap();
+        *self = mapper;
+    }
+
+    fn save_state(&self) -> Vec<u8> {
+        bincode::serialize(&self).unwrap()
     }
 }
