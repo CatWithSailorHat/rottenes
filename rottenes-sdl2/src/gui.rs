@@ -1,6 +1,6 @@
-use std::{any::Any, path::Path};
+use std::path::Path;
 
-use crate::{error::LoadError, emulator::Emulator, nes::StandardInput};
+use nes::{LoadError, Emulator, StandardInput};
 
 use sdl2::pixels::Color;
 use sdl2::event::Event;
