@@ -61,6 +61,11 @@ impl GuiObject {
 
             for event in event_pump.poll_iter() {
                 match event {
+                    Event::DropFile { timestamp, window_id, filename } => {
+                        let path = Path::new(&filename);
+                        self.emulator.load_rom_from_file(&path).unwrap();
+                        self.emulator.reset();
+                    }
                     Event::KeyDown { keycode: Some(Keycode::E), repeat: false, .. } => {
                         self.save_slot = Option::Some(self.emulator.save_state());
                     },

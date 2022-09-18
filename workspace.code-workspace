@@ -1,0 +1,11 @@
+{
+	"folders": [
+		{
+			"path": "nes"
+		},
+		{
+			"path": "rottenes-sdl2"
+		},
+	],
+	"settings": {}
+}

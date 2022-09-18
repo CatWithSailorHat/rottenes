@@ -617,7 +617,7 @@ fn imm_inner<CPU: Private>(cpu: &mut CPU, instruction: Instruction) {
         Operation::Read(f) => {
             f(cpu.regs_mut(), val)
         }
-        Operation::Unimplemented => {panic!()},
+        Operation::Unimplemented => {panic!("Unimplemented instruction: {:?}", instruction)},
         _ => panic!("Invalid instruction `{:?}` for `IMM`", instruction),
     };
 }
@@ -629,7 +629,7 @@ fn acc_inner<CPU: Private>(cpu: &mut CPU, instruction: Instruction) {
             let val = cpu.regs().A;
             cpu.regs_mut().A = f(cpu.regs_mut(), val);
         }
-        Operation::Unimplemented => {panic!()},
+        Operation::Unimplemented => {panic!("Unimplemented instruction: {:?}", instruction)},
         _ => panic!("Invalid instruction `{:?}` for `ACC`", instruction),
     };
 }
@@ -667,7 +667,7 @@ fn abs_inner<CPU: Private>(cpu: &mut CPU, instruction: Instruction) {
             let high = cpu.load(pc);
             cpu.regs_mut().PC = (low as u16) | ((high as u16) << 8);
         },
-        Operation::Unimplemented => {panic!()},
+        Operation::Unimplemented => {panic!("Unimplemented instruction: {:?}", instruction)},
         _ => panic!("Invalid instruction `{:?}` for `ABS`", instruction),
     };
 }
@@ -694,7 +694,7 @@ fn abx_inner<CPU: Private>(cpu: &mut CPU, instruction: Instruction) {
             let res = f(cpu.regs_mut());
             cpu.store(addr, res);
         },
-        Operation::Unimplemented => {panic!()},
+        Operation::Unimplemented => {panic!("Unimplemented instruction: {:?}", instruction)},
         _ => panic!("Invalid instruction `{:?}` for `ABX`", instruction),
     }
 }
@@ -721,7 +721,7 @@ fn aby_inner<CPU: Private>(cpu: &mut CPU, instruction: Instruction) {
             let res = f(cpu.regs_mut());
             cpu.store(addr, res);
         },
-        Operation::Unimplemented => {panic!()},
+        Operation::Unimplemented => {panic!("Unimplemented instruction: {:?}", instruction)},
         _ => panic!("Invalid instruction `{:?}` for `ABY`", instruction),
     }
 }
@@ -743,7 +743,7 @@ fn zpg_inner<CPU: Private>(cpu: &mut CPU, instruction: Instruction) {
             let res = f(cpu.regs_mut());
             cpu.store(addr, res);
         }
-        Operation::Unimplemented => {panic!()},
+        Operation::Unimplemented => {panic!("Unimplemented instruction: {:?}", instruction)},
         _ => panic!("Invalid instruction `{:?}` for `ZPG`", instruction),
     }
 }
@@ -768,7 +768,7 @@ fn zpx_inner<CPU: Private>(cpu: &mut CPU, instruction: Instruction) {
             let res = f(cpu.regs_mut());
             cpu.store(addr, res);
         }
-        Operation::Unimplemented => {panic!()},
+        Operation::Unimplemented => {panic!("Unimplemented instruction: {:?}", instruction)},
         _ => panic!("Invalid instruction `{:?}` for `ZPX`", instruction),
     }
 }
@@ -793,7 +793,7 @@ fn zpy_inner<CPU: Private>(cpu: &mut CPU, instruction: Instruction) {
             let res = f(cpu.regs_mut());
             cpu.store(addr, res);
         }
-        Operation::Unimplemented => {panic!()},
+        Operation::Unimplemented => {panic!("Unimplemented instruction: {:?}", instruction)},
         _ => panic!("Invalid instruction `{:?}` for `ZPY`", instruction),
     }
 }
@@ -820,7 +820,7 @@ fn izx_inner<CPU: Private>(cpu: &mut CPU, instruction: Instruction) {
             let res = f(cpu.regs_mut());
             cpu.store(addr, res);
         }
-        Operation::Unimplemented => {panic!()},
+        Operation::Unimplemented => {panic!("Unimplemented instruction: {:?}", instruction)},
         _ => panic!("Invalid instruction `{:?}` for `IZX`", instruction),
     }
 }
@@ -850,7 +850,7 @@ fn izy_inner<CPU: Private>(cpu: &mut CPU, instruction: Instruction) {
             let res = f(cpu.regs_mut());
             cpu.store(addr, res);
         },
-        Operation::Unimplemented => {panic!()},
+        Operation::Unimplemented => {panic!("Unimplemented instruction: {:?}", instruction)},
         _ => panic!("Invalid instruction `{:?}` for `IZY`", instruction),
     }
 }
@@ -911,7 +911,7 @@ fn imp_inner<CPU: Private>(cpu: &mut CPU, instruction: Instruction) {
             cpu.regs_mut().P.set(Flags::I, true);
             cpu.regs_mut().PC = cpu.load16(interrupt_addr)
         },
-        Operation::Unimplemented => {panic!()},
+        Operation::Unimplemented => {panic!("Unimplemented instruction: {:?}", instruction)},
         _ => panic!("Invalid instruction `{:?}` for `IMP`", instruction),
     }
 }
@@ -929,7 +929,7 @@ fn ind_inner<CPU: Private>(cpu: &mut CPU, instruction: Instruction) {
         Operation::JMP => {
             cpu.regs_mut().PC = addr;
         },
-        Operation::Unimplemented => {panic!()},
+        Operation::Unimplemented => {panic!("Unimplemented instruction: {:?}", instruction)},
         _ => panic!("Invalid instruction `{:?}` for `IND`", instruction),
     }
 }
@@ -946,7 +946,7 @@ fn rel_inner<CPU: Private>(cpu: &mut CPU, instruction: Instruction) {
                 if !on_same_page(old_pc, new_pc) { cpu.dummy_load((old_pc & 0xFF00) | (new_pc & 0x00FF)); };
             }
         },
-        Operation::Unimplemented => {panic!()},
+        Operation::Unimplemented => {panic!("Unimplemented instruction: {:?}", instruction)},
         _ => panic!("Invalid instruction `{:?}` for `REL`", instruction),
     }
 }

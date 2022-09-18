@@ -152,6 +152,7 @@ impl Emulator {
 
     fn load_from_stream<R: Read + Seek>(&mut self, stream: &mut R) -> Result<(), LoadError> {
         let rom = Rom::parse(stream)?;
+        self.nes = NesState::new();
         let mapper = mapper::create_mapper(rom)?;
         self.mapper = Some(mapper);
         Ok(())
