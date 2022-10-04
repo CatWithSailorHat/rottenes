@@ -1,6 +1,8 @@
 use crate::{bitmisc::U8BitTest, error::LoadError};
 use crate::cpu;
 use crate::ppu;
+use crate::apu;
+use crate::dma;
 
 use crate::mapper;
 
@@ -45,34 +47,37 @@ bitflags! {
 
 #[derive(Serialize, Deserialize)]
 struct NesState {
+    dma: dma::State,
+    apu: apu::State,
     ppu: ppu::State,
     mos6502: cpu::State,
     ram: Vec<u8>,
     cpu_cycle: Wrapping<usize>,
-    dma_state: DmaState,
     frame_generated: bool,
-
     input_1_offset: usize,
     input_2_offset: usize,
     input_1_mask: StandardInput,
     input_2_mask: StandardInput,
     input_strobe: bool,
+    sample_buffer: Vec<f32>,
 }
 
 impl NesState {
     pub fn new() -> Self {
         NesState {
+            dma: dma::State::new(),
+            apu: apu::State::new(),
             ppu: ppu::State::new(),
             mos6502: cpu::State::new(),
             ram: [0; 0x800].to_vec(),
             cpu_cycle: Wrapping(0),
-            dma_state: DmaState::NoDma,
             frame_generated: false,
             input_1_offset: 0,
             input_2_offset: 0,
             input_1_mask: StandardInput::empty(),
             input_2_mask: StandardInput::empty(),
             input_strobe: false,
+            sample_buffer: Vec::new(),
         }
     }
 }
@@ -145,6 +150,18 @@ impl Emulator {
         self.nes.input_1_mask.set(input_1, value);
     }
 
+    pub fn get_sample(&self) -> Vec<f32> {
+        self.nes.sample_buffer.clone()
+    }
+
+    pub fn clear_sample(&mut self) {
+        self.nes.sample_buffer.clear();
+    }
+
+    pub fn get_apu_output(&self) -> f32 {
+        apu::Interface::mixer_output(self)
+    }
+
     fn clear_input_mask(&mut self) {
         self.nes.input_1_mask = StandardInput::empty();
         self.nes.input_2_mask = StandardInput::empty();
@@ -207,16 +224,62 @@ impl Emulator {
                     (_, _) => panic!("Invalid register access {:x}", addr),
                 }
             },
+            0x4000..=0x4003 => {
+                match mode {
+                    AccessMode::Write(value) => {
+                        apu::Interface::set_pulse1(self, addr, value); value
+                    }
+                    _ => 0,
+                }
+            }
+            0x4004..=0x4007 => {
+                match mode {
+                    AccessMode::Write(value) => {
+                        apu::Interface::set_pulse2(self, addr, value); value
+                    }
+                    _ => 0,
+                }
+            }
+            0x4008..=0x400B => {
+                match mode {
+                    AccessMode::Write(value) => {
+                        apu::Interface::set_triangle(self, addr, value); value
+                    }
+                    _ => 0,
+                }
+            }
+            0x400C..=0x400F => {
+                match mode {
+                    AccessMode::Write(value) => {
+                        apu::Interface::set_noise(self, addr, value); value
+                    }
+                    _ => 0,
+                }
+            }
+            0x4010..=0x4013 => {
+                match mode {
+                    AccessMode::Write(value) => {
+                        apu::Interface::set_dmc(self, addr, value); value
+                    }
+                    _ => 0,
+                }
+            }
             0x4014 => {
                 match mode {
                     AccessMode::Read => panic!("Invalid dma port access"),
                     AccessMode::Write(value) => {
-                        self.nes.dma_state = DmaState::OmaDma(value);
-                        value
+                        dma::Interface::activate_ppu_dma(self, value); value
                     }
                 }
-                
             },
+            0x4015 => {
+                match mode {
+                    AccessMode::Read => apu::Interface::read_state_register(self),
+                    AccessMode::Write(value) => {
+                        apu::Interface::write_state_register(self, value); value
+                    }
+                }
+            }
             0x4016 => {
                 match mode {
                     AccessMode::Read => {
@@ -260,11 +323,11 @@ impl Emulator {
                         }
                     },
                     AccessMode::Write(value) => {
-                        0  // FIXME
+                        apu::Interface::set_frame(self, value); value
                     }
                 }
             }
-            0x4000..=0x4013 | 0x4018..=0x401F | 0x4015 => {
+            0x4018..=0x401F => {
                 0  // FIXME
             },
             0x4020..=0x5FFF => {
@@ -336,32 +399,14 @@ impl Emulator {
         ppu::Interface::tick(self);
         ppu::Interface::tick(self);
         ppu::Interface::tick(self);
+        apu::Interface::on_cpu_tick(self);
+        dma::Interface::on_cpu_tick(self);
     }
 }
 
 impl cpu::Context for Emulator {
     fn peek(&mut self, addr: u16) -> u8 {
-        // dma hijack
-        if let DmaState::OmaDma(v) = self.nes.dma_state {
-            self.on_cpu_cycle();
-            self.access(addr, AccessMode::Read);
-
-            if self.get_cycle() & 1 == 1 {  // not on `dma get cycle`
-                self.on_cpu_cycle();
-                self.access(addr, AccessMode::Read);
-            }
-            
-            let base_read_addr = (v as u16) << 8;
-            for i in 0usize..=255 {
-                self.on_cpu_cycle();
-                let value = self.access(base_read_addr + i as u16, AccessMode::Read);
-                self.on_cpu_cycle();
-                let index = (i + self.nes.ppu.oamaddr) & 0xFF;
-                self.nes.ppu.oamdata[index] = value;
-            }
-            self.nes.dma_state = DmaState::NoDma;
-        }
-
+        dma::Interface::dma_hijack(self, addr);
         self.on_cpu_cycle();
         self.access(addr, AccessMode::Read)
     }
@@ -403,5 +448,60 @@ impl ppu::Context for Emulator {
 
     fn trigger_nmi(&mut self) {
         self.nes.mos6502.nmi = true;
+    }
+}
+
+impl apu::Context for Emulator {
+    fn state(&self) -> &apu::State {
+        &self.nes.apu
+    }
+
+    fn state_mut(&mut self) -> &mut apu::State {
+        &mut self.nes.apu
+    }
+
+    fn set_irq(&mut self, irq_enable: bool) {
+        self.nes.mos6502.irq = irq_enable;
+    }
+
+    fn activate_dma(&mut self, addr: u16) {
+        dma::Interface::activate_dmc_dma(self, addr);
+    }
+
+    fn on_sample(&mut self, sample: f32) {
+        self.nes.sample_buffer.push(sample);
+    }
+
+    fn is_on_odd_cpu_cycle(&mut self) -> bool {
+        self.get_cycle() & 1 == 1
+    }
+}
+
+impl dma::Context for Emulator {
+    fn state(&mut self) -> &dma::State {
+        &self.nes.dma
+    }
+
+    fn state_mut(&mut self) -> &mut dma::State {
+        &mut self.nes.dma
+    }
+
+    fn peek_memory(&mut self, addr: u16) -> u8 {
+        self.on_cpu_cycle();
+        self.access(addr, AccessMode::Read)
+    }
+
+    fn is_odd_cpu_cycle(&self) -> bool {
+        self.get_cycle() & 1 == 1
+    }
+
+    fn on_dmc_dma_transfer(&mut self, value: u8) {
+        apu::Interface::on_dma_finish(self, value)
+    }
+
+    fn on_ppu_dma_transfer(&mut self, value: u8, offset: usize) {
+        self.on_cpu_cycle();
+        let index = (offset + self.nes.ppu.oamaddr) & 0xFF;
+        self.nes.ppu.oamdata[index] = value;
     }
 }

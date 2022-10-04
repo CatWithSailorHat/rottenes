@@ -90,7 +90,7 @@ pub trait Interface: Sized + Context {
         if self.state().nmi {
             self.hardware_interrupt();
             self.state_mut().nmi = false;
-        } else if self.state().irq && self.state().regs.P.contains(Flags::I) {
+        } else if self.state().irq && !self.state().regs.P.contains(Flags::I) {
             self.hardware_interrupt();
             self.state_mut().irq = false;
         }

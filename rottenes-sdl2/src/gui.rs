@@ -6,6 +6,7 @@ use sdl2::pixels::Color;
 use sdl2::event::Event;
 use sdl2::rect::Rect;
 use sdl2::keyboard::Keycode;
+use sdl2::audio::{AudioQueue, AudioSpecDesired};
 use std::time::Duration; 
 
 pub struct GuiObject {
@@ -29,6 +30,7 @@ impl GuiObject {
         use std::time::Instant;
         let sdl_context = sdl2::init().unwrap();
         let video_subsystem = sdl_context.video().unwrap();
+        let audio_subsystem = sdl_context.audio().unwrap();
         
         let magnifaction = 3u32;
         let window = video_subsystem.window("rust-sdl2 demo", 256 * magnifaction, 240 * magnifaction)
@@ -42,6 +44,16 @@ impl GuiObject {
         canvas.present();
 
         self.emulator.reset();
+
+        let desired_spec = AudioSpecDesired {
+            freq: Some(44100),
+            channels: Some(1),
+            samples: None,
+        };
+
+        let audio_device: AudioQueue<f32> = audio_subsystem.open_queue(None, &desired_spec).unwrap();
+        audio_device.resume();
+
 
         let mut event_pump = sdl_context.event_pump().unwrap();
         
@@ -107,7 +119,10 @@ impl GuiObject {
                 self.emulator.set_input_1(StandardInput::A, true)
             }
             
+            audio_device.queue_audio(self.emulator.get_sample().as_slice()).unwrap();
+            self.emulator.clear_sample();
             canvas.present();
+
             let t = start.elapsed().as_nanos();
             let wait = if (1_000_000_000u128 / 60) > t {
                 ((1_000_000_000u128 / 60) - t) as u32

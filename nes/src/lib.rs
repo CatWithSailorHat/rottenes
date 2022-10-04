@@ -10,6 +10,8 @@ mod error;
 mod mapper;
 mod rom;
 mod emulator;
+mod apu;
+mod dma;
 
 pub use emulator::{StandardInput, Emulator};
 pub use error::LoadError;
