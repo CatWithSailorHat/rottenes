@@ -27,6 +27,8 @@ impl GuiObject {
     }
 
     pub fn run(&mut self) {
+        let mut frame_counter = 0usize;
+        let mut frame_skipped = 0usize;
         use std::time::Instant;
         let sdl_context = sdl2::init().unwrap();
         let video_subsystem = sdl_context.video().unwrap();
@@ -61,6 +63,7 @@ impl GuiObject {
             let start = Instant::now();
             // let start2 = Instant::now();
             self.emulator.run_for_one_frame();
+            frame_counter += 1;
             // println!("time cost: {:?} ms", start2.elapsed().as_millis());
             let frame_buffer = self.emulator.get_framebuffer();
             for (i, rgb) in frame_buffer.iter().enumerate() {
@@ -118,9 +121,19 @@ impl GuiObject {
             if keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::K) {
                 self.emulator.set_input_1(StandardInput::A, true)
             }
-            
+
             audio_device.queue_audio(self.emulator.get_sample().as_slice()).unwrap();
             self.emulator.clear_sample();
+            
+            // if frame_counter % 60 == 0 {
+            //     println!("{}", frame_skipped);
+            //     frame_skipped = 0;
+            // }
+
+            if audio_device.size() < 44100 / 2 && frame_counter & 1 == 0 {
+                frame_skipped += 1;
+                continue;
+            }
             canvas.present();
 
             let t = start.elapsed().as_nanos();

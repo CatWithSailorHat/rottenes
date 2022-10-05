@@ -1036,7 +1036,8 @@ trait Private: Sized + Context {
     fn output_clock(&mut self) {
         let sample_rate = 44.1;
         let cpu_frequence = 21477.272 / 12.0;
-        let sample_every = cpu_frequence / sample_rate;
+        let adjust = 1.9;  // experienced parameter
+        let sample_every = cpu_frequence / sample_rate - adjust;
         if self.state().sample_counter > sample_every {
             self.state_mut().sample_counter -= sample_every;
             let sample = self.mixer_output();
