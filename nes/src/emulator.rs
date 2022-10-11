@@ -4,12 +4,10 @@ use crate::ppu;
 use crate::apu;
 use crate::dma;
 
-use crate::mapper;
+use crate::cartridge;
 
 use serde::{Serialize, Deserialize};
 use std::num::Wrapping;
-
-use crate::{rom::Rom};
 
 use std::{io::{Cursor}, path::Path};
 use std::fs::File;
@@ -83,7 +81,7 @@ impl NesState {
 }
 
 pub struct Emulator {
-    mapper: Option<Box<dyn mapper::Mapper>>,
+    mapper: Option<Box<dyn cartridge::Mapper>>,
     nes: NesState,
 }
 
@@ -168,9 +166,8 @@ impl Emulator {
     }
 
     fn load_from_stream<R: Read + Seek>(&mut self, stream: &mut R) -> Result<(), LoadError> {
-        let rom = Rom::parse(stream)?;
+        let (_, mapper) = cartridge::parse_stream(stream)?;
         self.nes = NesState::new();
-        let mapper = mapper::create_mapper(rom)?;
         self.mapper = Some(mapper);
         Ok(())
     }
@@ -221,7 +218,10 @@ impl Emulator {
                     (7, AccessMode::Write(value)) => {
                         ppu::Interface::write_ppudata(self, value); value
                     }
-                    (_, _) => panic!("Invalid register access {:x}", addr),
+                    (_, _) => {
+                        println!("Invalid register access 0x{:x}", addr);
+                        0
+                    },
                 }
             },
             0x4000..=0x4003 => {
@@ -266,7 +266,10 @@ impl Emulator {
             }
             0x4014 => {
                 match mode {
-                    AccessMode::Read => panic!("Invalid dma port access"),
+                    AccessMode::Read => {
+                        println!("Invalid register access 0x{:x}", addr);
+                        0
+                    },
                     AccessMode::Write(value) => {
                         dma::Interface::activate_ppu_dma(self, value); value
                     }
@@ -341,25 +344,14 @@ impl Emulator {
                     }
                 }
             }
-            0x6000..=0x7FFF => {
+            0x6000..=0xFFFF => {
                 let mapper = self.mapper.as_mut().unwrap();
                 match mode {
                     AccessMode::Read => {
-                        mapper.peek_sram(addr)
+                        mapper.peek(addr)
                     },
                     AccessMode::Write(value) => {
-                        mapper.poke_sram(addr, value); value
-                    }
-                }
-            }
-            0x8000..=0xFFFF => {
-                let mapper =  self.mapper.as_mut().unwrap();
-                match mode {
-                    AccessMode::Read => {
-                        mapper.peek_prg_rom(addr)
-                    },
-                    AccessMode::Write(value) => {
-                        mapper.poke_prg_rom(addr, value); value
+                        mapper.poke(addr, value); value
                     }
                 }
             }
@@ -369,24 +361,14 @@ impl Emulator {
     fn vaccess(&mut self, addr: u16, mode: AccessMode) -> u8 {
         let mapper =  self.mapper.as_mut().unwrap();
         match addr {
-            0x0000..= 0x1FFF => {
+            0x0000..= 0x3EFF => {
+                let addr = if addr > 0x2FFF { addr & 0x2FFF } else { addr };
                 match mode {
                     AccessMode::Read => {
-                        mapper.vpeek_pattern(addr)
+                        mapper.vpeek(addr)
                     },
                     AccessMode::Write(value) => {
-                        mapper.vpoke_pattern(addr, value); value
-                    }
-                }
-            },
-            0x2000..=0x3EFF => {
-                let addr = addr & 0x2FFF;
-                match mode {
-                    AccessMode::Read => {
-                        mapper.vpeek_nametable(addr)
-                    },
-                    AccessMode::Write(value) => {
-                        mapper.vpoke_nametable(addr, value); value
+                        mapper.vpoke(addr, value); value
                     }
                 }
             },
@@ -401,6 +383,8 @@ impl Emulator {
         ppu::Interface::tick(self);
         apu::Interface::on_cpu_tick(self);
         dma::Interface::on_cpu_tick(self);
+        let mapper =  self.mapper.as_mut().unwrap();
+        mapper.tick();
     }
 }
 
