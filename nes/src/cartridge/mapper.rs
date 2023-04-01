@@ -182,6 +182,7 @@ impl BaseMapper {
         bank_window: BankWindow,
         mem_attr: MemAttr,
     ) {
+        let bank_selector = bank_selector % ((self.prg_rom.len() / (bank_window as usize)) as u8);
         let addr = addr & (bank_window as u16 - 1).reverse_bits();
         let bank_window = bank_window as usize;
         let offset = bank_window * bank_selector as usize;
@@ -221,6 +222,7 @@ impl BaseMapper {
         bank_window: BankWindow,
         mem_attr: MemAttr,
     ) {
+        let bank_selector = bank_selector % ((self.chr_mem.len() / (bank_window as usize)) as u8);
         let addr = addr & (bank_window as u16 - 1).reverse_bits();
         let bank_window = bank_window as usize;
         let offset = bank_window * bank_selector as usize;
@@ -379,7 +381,7 @@ pub trait Mapper {
     fn vpeek(&mut self, addr: u16) -> u8;
     fn vpoke(&mut self, addr: u16, val: u8);
 
-    fn tick(&mut self) {}
+    fn irq(&mut self) -> bool { false }
 
     fn load_state(&mut self, state: Vec<u8>);
     fn save_state(&self) -> Vec<u8>;

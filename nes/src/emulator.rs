@@ -383,8 +383,6 @@ impl Emulator {
         ppu::Interface::tick(self);
         apu::Interface::on_cpu_tick(self);
         dma::Interface::on_cpu_tick(self);
-        let mapper =  self.mapper.as_mut().unwrap();
-        mapper.tick();
     }
 }
 
