@@ -512,6 +512,7 @@ pub trait Context: Sized {
     fn state_mut(&mut self) -> &mut State;
     fn trigger_nmi(&mut self);
     fn generate_frame(&mut self);
+    fn irq_scanline(&mut self);
 }
 
 pub trait Interface: Sized + Context {
@@ -591,6 +592,12 @@ trait Private: Sized + Context {
                 self.draw_pixel();
                 self.prepare_render_data();
             }
+            (0..=239, 260) => {
+                if self.is_rendering() {
+                    self.irq_scanline();
+                }
+                self.prepare_render_data();
+            }
             (0..=239, _) => {
                 self.prepare_render_data();
             }
@@ -609,6 +616,12 @@ trait Private: Sized + Context {
                 self.state_mut().pstatus.set_sprite_overflow(false);
                 self.state_mut().pstatus.set_sprite_0_hit(false);
                 self.state_mut().nmi_already_triggered = false;
+                self.prepare_render_data();
+            }
+            (261, 260) => {
+                if self.is_rendering() {
+                    self.irq_scanline();
+                }
                 self.prepare_render_data();
             }
             (261, _) => {
@@ -1139,6 +1152,9 @@ trait Private: Sized + Context {
     fn increase_current_address(&mut self) {
         let inc = self.state().pctrl.vram_addr_increment();
         let value = (self.state().current_addr.0 as usize + inc) & 0x7FFF;
+        // if self.state().current_addr.0 & 0x1000 == 0 && value & 0x1000 != 0 {
+        //     self.irq_scanline();
+        // }
         self.state_mut().current_addr.0 = value as u16;
     }
 
@@ -1149,6 +1165,9 @@ trait Private: Sized + Context {
         }
         else {
             self.state_mut().temporary_addr.set_low_byte(value);
+            // if self.state().current_addr.0 & 0x1000 == 0 && self.state().temporary_addr.0 & 0x1000 != 0 {
+            //     self.irq_scanline();
+            // }
             self.state_mut().current_addr.0 = self.state().temporary_addr.0;
             self.state_mut().write_toggle = false;
         }

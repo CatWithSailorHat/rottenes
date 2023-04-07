@@ -13,6 +13,7 @@ pub struct State {
     irq_counter: u8,
     irq_latch: u8,
     four_screen: bool,
+    irq_acknowledge_flag: bool
 }
 
 impl State {
@@ -57,6 +58,7 @@ impl State {
             irq_counter: 0,
             irq_latch: 0, 
             four_screen: header.four_screen_mode,
+            irq_acknowledge_flag: false,
         }
     }
 }
@@ -159,6 +161,7 @@ impl Mapper for State {
             0xE000..=0xFFFF => {
                 if addr & 1 == 0 {
                     self.irq_enable = false;
+                    self.irq_acknowledge_flag = true;
                 }
                 else {
                     self.irq_enable = true;
@@ -188,11 +191,22 @@ impl Mapper for State {
     fn irq(&mut self) -> bool { 
         if self.irq_counter == 0 {
             self.irq_counter = self.irq_latch;
-            self.irq_enable
+            false
         }
         else {
             self.irq_counter -= 1;
-            false
+            if self.irq_counter == 0 {
+                true
+            }
+            else {
+                false
+            }
         }
+    }
+
+    fn irq_acknowledge(&mut self) -> bool { 
+        let res = self.irq_acknowledge_flag;
+        self.irq_acknowledge_flag = false;
+        res
     }
 }

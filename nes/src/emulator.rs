@@ -383,6 +383,10 @@ impl Emulator {
         ppu::Interface::tick(self);
         apu::Interface::on_cpu_tick(self);
         dma::Interface::on_cpu_tick(self);
+        let mapper = self.mapper.as_mut().unwrap();
+        if mapper.irq_acknowledge() {
+            self.nes.mos6502.irq = false;
+        }
     }
 }
 
@@ -431,6 +435,13 @@ impl ppu::Context for Emulator {
     fn trigger_nmi(&mut self) {
         self.nes.mos6502.nmi = true;
     }
+
+    fn irq_scanline(&mut self) {
+        let mapper = self.mapper.as_mut().unwrap();
+        if mapper.irq() {
+            self.nes.mos6502.irq = true;
+        }
+    }
 }
 
 impl apu::Context for Emulator {
@@ -443,7 +454,9 @@ impl apu::Context for Emulator {
     }
 
     fn set_irq(&mut self, irq_enable: bool) {
-        self.nes.mos6502.irq = irq_enable;
+        // conflict with mmc3 irq, fixme later
+        
+        // self.nes.mos6502.irq = irq_enable;
     }
 
     fn activate_dma(&mut self, addr: u16) {
